@@ -201,6 +201,92 @@ CLAUDE_CONFIG_DIR path: ~/.claude_router_home
 Follow the upstream project's README for the router's own install, startup, and configuration
 steps: <https://github.com/musistudio/claude-code-router>.
 
+## Route Profiles: Running Other Anthropic-Compatible Endpoints
+
+A route profile is a dedicated Claude provider instance pointed at a different
+Anthropic-compatible endpoint instead of `api.anthropic.com` — for example, a proxy that fronts a
+non-Anthropic model behind the Claude Code protocol.
+
+### Configure A Route Profile
+
+Create a new Claude provider instance for the endpoint:
+
+```text
+Display name: Claude Muse
+Binary path: claude
+CLAUDE_CONFIG_DIR path: ~/.claude_muse_home
+```
+
+In that provider's Environment variables section, add the endpoint and its token:
+
+```text
+ANTHROPIC_BASE_URL    https://your-endpoint.example.com
+ANTHROPIC_AUTH_TOKEN  <endpoint token>                    Sensitive
+```
+
+Mark `ANTHROPIC_AUTH_TOKEN` as sensitive.
+
+### Map Every Model Tier
+
+If the endpoint serves a single model, map all of Claude Code's model roles to it. An endpoint
+that only maps some roles will 404 on the roles you left out, including background fast-model
+calls:
+
+```text
+ANTHROPIC_MODEL                     <endpoint model slug>
+ANTHROPIC_DEFAULT_OPUS_MODEL        <endpoint model slug>
+ANTHROPIC_DEFAULT_SONNET_MODEL      <endpoint model slug>
+ANTHROPIC_DEFAULT_HAIKU_MODEL       <endpoint model slug>
+ANTHROPIC_SMALL_FAST_MODEL          <endpoint model slug>
+```
+
+If the endpoint supports a larger context window than Claude's default, raise it too:
+
+```text
+CLAUDE_CODE_MAX_CONTEXT_TOKENS      1007997
+```
+
+### Add The Model To The Picker
+
+Built-in Claude model picks (Sonnet, Opus, Haiku) will 404 against a route-profile endpoint —
+those slugs don't exist there. Add the endpoint's real model slug as a custom model instead: open
+this provider instance's card in Settings → Providers, expand its Models section, and add the
+slug. It appears in the model picker for this instance alongside (or instead of) the built-ins.
+
+### Example: Muse
+
+```text
+ANTHROPIC_BASE_URL              https://api.meta.ai
+ANTHROPIC_AUTH_TOKEN             <token>                  Sensitive
+ANTHROPIC_MODEL                  muse-spark-1.2-contributor
+ANTHROPIC_DEFAULT_OPUS_MODEL     muse-spark-1.2-contributor
+ANTHROPIC_DEFAULT_SONNET_MODEL   muse-spark-1.2-contributor
+ANTHROPIC_DEFAULT_HAIKU_MODEL    muse-spark-1.2-contributor
+ANTHROPIC_SMALL_FAST_MODEL       muse-spark-1.2-contributor
+CLAUDE_CODE_MAX_CONTEXT_TOKENS   1007997
+```
+
+Add `muse-spark-1.2-contributor` as a custom model on this instance.
+
+### Example: Kimi K3
+
+```text
+ANTHROPIC_BASE_URL              https://api.kimi.com/coding
+ANTHROPIC_AUTH_TOKEN             <token>                  Sensitive
+ANTHROPIC_MODEL                  kimi-k3
+ANTHROPIC_DEFAULT_OPUS_MODEL     kimi-k3
+ANTHROPIC_DEFAULT_SONNET_MODEL   kimi-k3
+ANTHROPIC_DEFAULT_HAIKU_MODEL    kimi-k3
+ANTHROPIC_SMALL_FAST_MODEL       kimi-k3
+```
+
+Add `kimi-k3` as a custom model on this instance.
+
+### Leave The Credential Broker Empty
+
+Don't set a credential broker URL on a route-profile instance. The broker injects Anthropic OAuth
+credentials, which would fight the endpoint's own token.
+
 ## I Want Different Claude Settings, Not A Different Account
 
 Create another Claude provider with the same account if you want a named preset.

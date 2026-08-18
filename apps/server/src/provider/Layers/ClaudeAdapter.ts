@@ -81,7 +81,9 @@ import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
   applyBrokerResolution,
+  classifyClaudeFailure,
   DEFAULT_BROKER_TOKEN_ENV,
+  reportBrokerLimit,
   resolveBrokerEnvironment,
 } from "./ClaudeCredentialBroker.ts";
 import {
@@ -286,6 +288,11 @@ interface ClaudeSessionContext {
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
   stopped: boolean;
+  /** Set when this session's query environment came from a resolved broker
+   * account. Drives the account-hop on a rate-limited turn failure. */
+  readonly brokered:
+    | { readonly account: string; readonly brokerUrl: string; readonly token: string }
+    | undefined;
 }
 
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
@@ -1697,6 +1704,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  /**
+   * Accounts hopped away from per thread, carried across the session
+   * teardown/restart so the next broker resolution excludes them. In-memory
+   * best-effort only — the broker's own server-side parking (15m TTL) is the
+   * real guard; this just saves a resolution round-trip while parking is
+   * fresh. Entries are dropped once a resolution lands on a fresh account.
+   */
+  const hoppedAccounts = new Map<ThreadId, ReadonlyArray<string>>();
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const randomUUIDv4 = crypto.randomUUIDv4.pipe(
@@ -2056,6 +2071,50 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       },
       providerRefs: nativeProviderRefs(context),
     });
+  });
+
+  /**
+   * Turn-boundary account hop (Phase 2, spec section B): when a brokered
+   * session's turn fails with rate-limit phrasing, park the account with the
+   * broker (non-blocking), remember it so the next resolution excludes it,
+   * tell the thread, and tear the session down so the next turn resumes
+   * fresh via the existing resume-cursor machinery. Never retries the failed
+   * turn (T3: a resumed retry can redo already-completed work) — the next
+   * user message is what runs on the new account.
+   */
+  const maybeHopBrokeredAccount = Effect.fn("maybeHopBrokeredAccount")(function* (
+    context: ClaudeSessionContext,
+    errorText: string | undefined,
+  ) {
+    if (!context.brokered || !errorText) return;
+    if (classifyClaudeFailure(errorText) !== "rate-limit") return;
+
+    const { account, brokerUrl, token } = context.brokered;
+    const threadId = context.session.threadId;
+    const tried = hoppedAccounts.get(threadId) ?? [];
+    if (!tried.includes(account)) {
+      hoppedAccounts.set(threadId, [...tried, account]);
+    }
+
+    // Fire-and-forget: reportBrokerLimit never fails and has its own 5s
+    // budget. Forked so a slow broker never delays the hop itself.
+    yield* Effect.forkDetach(reportBrokerLimit({ brokerUrl, token, account }));
+
+    yield* emitRuntimeWarning(
+      context,
+      `Broker account "${account}" hit its rate limit. Switching accounts before the next turn.`,
+      { event: "account-hop", account },
+    );
+
+    // Forked, not called inline: this runs on the same fiber that is still
+    // mid-stream (about to loop back for the next SDK message), and
+    // stopSessionInternal interrupts context.streamFiber — i.e. itself, if
+    // called synchronously here. Forking hands the teardown (and the
+    // cross-fiber interrupt it performs) to an independent daemon fiber, the
+    // same shape every other caller of stopSessionInternal already uses.
+    // Reuses the exact path stopSession()/handleStreamExit use; idempotent
+    // if the caller also tears down right after (stream-exit path does).
+    yield* Effect.forkDetach(stopSessionInternal(context, { emitExitEvent: true }));
   });
 
   const emitThreadTokenUsage = Effect.fn("emitThreadTokenUsage")(function* (
@@ -2989,6 +3048,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     yield* completeTurn(context, status, errorMessage, message);
+
+    if (status === "failed") {
+      yield* maybeHopBrokeredAccount(context, errorMessage);
+    }
   });
 
   /**
@@ -3627,6 +3690,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           failureTags: failures.map((failure) => failure._tag),
         });
         yield* completeTurn(context, "failed", message);
+        yield* maybeHopBrokeredAccount(context, message);
       }
     } else if (context.turnState) {
       yield* completeTurn(context, "interrupted", "Claude runtime stream ended.");
@@ -4161,10 +4225,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // Resolved per turn (not cached per session): a hanging broker adds up to
       // BROKER_REQUEST_TIMEOUT_MS to every turn's start. Add memoization with a short TTL
       // if that latency becomes measurable in practice.
+      const brokerToken =
+        claudeEnvironment[claudeSettings.brokerTokenEnv || DEFAULT_BROKER_TOKEN_ENV];
+      const brokerTriedAccounts = hoppedAccounts.get(threadId);
       const brokerResolution = yield* resolveBrokerEnvironment({
         brokerUrl: claudeSettings.brokerUrl,
-        token: claudeEnvironment[claudeSettings.brokerTokenEnv || DEFAULT_BROKER_TOKEN_ENV],
+        token: brokerToken,
         host: NodeOS.hostname(),
+        ...(brokerTriedAccounts && brokerTriedAccounts.length > 0
+          ? { exclude: brokerTriedAccounts }
+          : {}),
       });
       if (brokerResolution._tag !== "ok" && brokerResolution._tag !== "disabled") {
         yield* Effect.logWarning(
@@ -4172,6 +4242,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           { providerInstanceId: boundInstanceId, brokerStatus: brokerResolution._tag },
         );
       }
+      // Single-use: the exclude list is only ever meant to shadow this one
+      // resolution attempt (the broker's own server-side parking is the
+      // durable guard). Drop it here regardless of outcome — leaving it only
+      // on "ok" meant every resolution that came back no-headroom/
+      // unreachable/unauthorized (e.g. a single-account broker) kept
+      // re-excluding the same account forever, permanently pinning the
+      // thread to instance credentials.
+      hoppedAccounts.delete(threadId);
       const queryEnvironment = applyBrokerResolution(claudeEnvironment, brokerResolution);
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -4299,6 +4377,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
         stopped: false,
+        brokered:
+          brokerResolution._tag === "ok" && brokerToken
+            ? {
+                account: brokerResolution.account,
+                brokerUrl: claudeSettings.brokerUrl,
+                token: brokerToken,
+              }
+            : undefined,
       };
       yield* Ref.set(contextRef, context);
       sessions.set(threadId, context);

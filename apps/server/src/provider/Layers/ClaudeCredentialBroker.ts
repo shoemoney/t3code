@@ -70,6 +70,8 @@ export const resolveBrokerEnvironment = Effect.fn("resolveBrokerEnvironment")(fu
   readonly brokerUrl: string;
   readonly token: string | undefined;
   readonly host: string;
+  /** Accounts to skip on this resolution — the hop's exclude list. Sent as `&exclude=a,b`. */
+  readonly exclude?: ReadonlyArray<string>;
   /** Test seam only — production callers use the 8s default. */
   readonly timeoutMs?: number;
 }) {
@@ -78,7 +80,11 @@ export const resolveBrokerEnvironment = Effect.fn("resolveBrokerEnvironment")(fu
   const token = input.token;
   if (!token) return { _tag: "unauthorized" } as const;
 
-  const selectUrl = `${brokerUrl.replace(/\/+$/, "")}/api/select?host=${encodeURIComponent(input.host)}`;
+  const excludeParam =
+    input.exclude && input.exclude.length > 0
+      ? `&exclude=${encodeURIComponent(input.exclude.join(","))}`
+      : "";
+  const selectUrl = `${brokerUrl.replace(/\/+$/, "")}/api/select?host=${encodeURIComponent(input.host)}${excludeParam}`;
   const timeoutMs = input.timeoutMs ?? BROKER_REQUEST_TIMEOUT_MS;
 
   return yield* Effect.tryPromise({
@@ -119,4 +125,51 @@ export function applyBrokerResolution(
   resolution: BrokerResolution,
 ): NodeJS.ProcessEnv {
   return resolution._tag === "ok" ? { ...baseEnv, ...resolution.env } : baseEnv;
+}
+
+/**
+ * Reports a rate-limited account to the broker so it can be parked. Fire-and-forget:
+ * never fails, never logs the token. Resolves `true` only on a 2xx response.
+ */
+export const reportBrokerLimit = Effect.fn("reportBrokerLimit")(function* (input: {
+  readonly brokerUrl: string;
+  readonly token: string;
+  readonly account: string;
+  readonly minutes?: number;
+}) {
+  const url = `${input.brokerUrl.replace(/\/+$/, "")}/api/events/limit`;
+  return yield* Effect.tryPromise({
+    try: async (): Promise<boolean> => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${input.token}`,
+          "content-type": "application/json",
+        },
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - fire-and-forget wire body, not a decoded value.
+        body: JSON.stringify({
+          account: input.account,
+          ...(input.minutes !== undefined ? { minutes: input.minutes } : {}),
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+      return response.ok;
+    },
+    catch: () => undefined,
+  }).pipe(Effect.orElseSucceed((): boolean => false));
+});
+
+/**
+ * Pure classifier for a turn's terminal error text. Mirrors the field-proven warden
+ * classifier: overloaded (Anthropic-global load shed) is checked first and never
+ * triggers a hop — only rate-limit does.
+ */
+export function classifyClaudeFailure(text: string): "rate-limit" | "overloaded" | "other" {
+  if (/overloaded|529/i.test(text)) return "overloaded";
+  if (
+    /rate.?limit|usage limit|too many requests|429|quota|reached your (usage|limit)/i.test(text)
+  ) {
+    return "rate-limit";
+  }
+  return "other";
 }

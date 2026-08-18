@@ -100,6 +100,14 @@ The backend agent runtime that actually performs work. Five drivers ship built i
 
 An account-selector endpoint that picks provider credentials based on the hostname running a session. Configured on a per-instance basis, the broker is called at session start and returns environment-specific credentials (such as API tokens or OAuth tokens) that overlay the instance's own environment. Fallback to instance credentials is automatic on any broker error. See [ClaudeCredentialBroker.ts][25] and the credential broker section in [providers.md][16].
 
+#### Account hop
+
+Switching a brokered Claude session to a different account after the current one hits a rate limit. Turn-boundary only: the adapter classifies the failed turn's error text, reports the account to the broker for parking, and tears the session down cleanly once the turn is done — never mid-write, and never with an auto-retry of the failed turn. The next turn resolves credentials again with the tried accounts excluded. See the account hop section in [providers.md][16] and [ClaudeCredentialBroker.ts][25].
+
+#### Route profile
+
+A provider instance configured to talk to a different Anthropic-compatible endpoint instead of the default one, by overriding `ANTHROPIC_BASE_URL` and its model-tier environment variables. Used to run non-Anthropic models through the Claude Code protocol. See the route profiles section in [providers-claude.md][26].
+
 #### Session
 
 The live provider-backed runtime attached to a thread. Session shape is in [the orchestration contracts][1], and lifecycle is managed in [ProviderService.ts][14].
@@ -184,3 +192,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
 [25]: ../../apps/server/src/provider/Layers/ClaudeCredentialBroker.ts
+[26]: ../user/providers-claude.md

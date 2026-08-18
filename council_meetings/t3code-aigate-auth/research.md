@@ -121,3 +121,19 @@ credentials.
   the control correctly SKIPs.
 - Meta-lesson (again): the first "falsification" was a wrong-probe artifact; the second look
   found a REAL adjacent hazard. Both outcomes only surfaced because the probe existed.
+
+## Chair verification pass #5 (Phase 2 gates, 2026-08-18 morning)
+
+- **T1 (VERIFIED):** Meta gateway 404s claude slugs (`not_found_error`), serves
+  `muse-spark-1.2-contributor` → route profiles must expose real slugs via customModels.
+- **T2 (VERIFIED):** SDK `initializationResult().account` under injected token =
+  `{tokenSource:"CLAUDE_CODE_OAUTH_TOKEN", apiProvider:"firstParty"}` — typed proof of the
+  credential source (no email in this shape; broker resolution carries the account name).
+- **T3 (VERIFIED, with teeth):** mid-tool-call interrupt under account A → resume under B:
+  session + context carry over, task completes — but the resumed model RE-EXECUTED an
+  already-completed Write (wrote one.txt twice) despite explicit "don't redo" instructions.
+  Auto-retry after interrupt = duplicated side effects with non-idempotent tools. v1 hop must
+  not auto-retry. (bastardtech → personal, haiku, n=1.)
+- **EXP-10 (VERIFIED):** full muse route profile through the Agent SDK `query()` — env overlay
+  (BASE_URL/AUTH_TOKEN/tier map/CLAUDE_CODE_MAX_CONTEXT_TOKENS) + explicit
+  `model: muse-spark-1.2-contributor` → success, `modelUsage` names muse as the serving model.

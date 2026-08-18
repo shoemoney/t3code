@@ -70,6 +70,25 @@ Resolution failures are annotated on the session's trace span
 (`claude.broker.status` and `claude.broker.account`), but do not block session startup. See
 [`ClaudeAdapter.ts`][claude] and [`ClaudeCredentialBroker.ts`][broker] for implementation.
 
+### Account hop
+
+A brokered Claude session can hop to a different account when its current one is rate-limited.
+The trigger is a turn that completes as failed with an error message `classifyClaudeFailure`
+(in [`ClaudeCredentialBroker.ts`][broker]) tags `rate-limit` — `overloaded`/529 is checked first
+and never hops, since that's an Anthropic-global load shed rather than an account-specific limit.
+On a rate-limit failure, the adapter reports the account to the broker via `reportBrokerLimit` so
+it can be parked server-side, then tears down the session cleanly at the turn boundary — the turn
+has already finished, so this never interrupts a mid-write. The next turn for that thread
+reconstructs the query through the existing resume-cursor machinery and broker seam, passing the
+tried accounts as `exclude` on the next `resolveBrokerEnvironment` call so the same account isn't
+immediately re-selected; the broker's own parking is the durable guard, the exclude list is
+belt-and-suspenders for parking latency.
+
+The hop never auto-retries the turn that failed. A resumed session re-running an
+already-completed step under "don't redo" instructions was observed after a mid-tool-call
+interrupt, so the hop only ever takes effect at a turn boundary and leaves the failed turn parked
+for the next user message to pick up on the fresh account.
+
 ## Server-side workers
 
 Provider work flows through three queue-backed workers. All three are built with

@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -22,7 +24,7 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { assert, describe, it } from "@effect/vitest";
+import { afterEach, assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -161,6 +163,7 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly environment?: NodeJS.ProcessEnv;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -172,6 +175,7 @@ function makeHarness(config?: {
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
+    ...(config?.environment ? { environment: config.environment } : {}),
     createQuery: (input) => {
       createInput = input;
       return query;
@@ -202,6 +206,69 @@ function makeHarness(config?: {
           config?.baseDir ?? "/tmp",
         ),
       ),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(NodeServices.layer),
+    ),
+    query,
+    getLastCreateQueryInput: () => createInput,
+  };
+}
+
+// Servers backing the broker-hop tests below. Closed after each test so a
+// broker HTTP server never outlives the test that spun it up.
+const brokerServers: NodeHttp.Server[] = [];
+
+afterEach(() => {
+  for (const server of brokerServers.splice(0)) {
+    server.close();
+  }
+});
+
+function listenBroker(server: NodeHttp.Server): Promise<number> {
+  brokerServers.push(server);
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      resolve((server.address() as NodeNet.AddressInfo).port);
+    });
+  });
+}
+
+/**
+ * Like makeHarness, but backs the instance's brokerUrl with a real loopback
+ * HTTP server whose port is only known once it starts listening — so the
+ * server is created and bound inside the layer's own Effect rather than
+ * synchronously in the test body.
+ */
+function makeBrokeredHarness(config: {
+  readonly onRequest: (req: NodeHttp.IncomingMessage, res: NodeHttp.ServerResponse) => void;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
+  const query = new FakeClaudeQuery();
+  let createInput:
+    | {
+        readonly prompt: AsyncIterable<SDKUserMessage>;
+        readonly options: ClaudeQueryOptions;
+      }
+    | undefined;
+
+  return {
+    layer: Layer.effect(
+      ClaudeAdapter,
+      Effect.gen(function* () {
+        const server = NodeHttp.createServer(config.onRequest);
+        const port = yield* Effect.promise(() => listenBroker(server));
+        const claudeConfig = decodeClaudeSettings({ brokerUrl: `http://127.0.0.1:${port}` });
+        const adapterOptions: ClaudeAdapterLiveOptions = {
+          createQuery: (input) => {
+            createInput = input;
+            return query;
+          },
+          ...(config.environment ? { environment: config.environment } : {}),
+        };
+        return yield* makeClaudeAdapter(claudeConfig, adapterOptions);
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(NodeServices.layer),
     ),
@@ -4609,5 +4676,255 @@ describe("ClaudeAdapterLive", () => {
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
+  });
+
+  describe("account hop (Phase 2)", () => {
+    it.effect(
+      "brokered rate-limit failure fires one hop warning and tears the session down",
+      () => {
+        const harness = makeBrokeredHarness({
+          onRequest: (_req, res) => {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ setup_token: "sk-broker-token", account: "acct-a" }));
+          },
+          environment: { AIGATE_TOKEN: "test-broker-token" },
+        });
+        return Effect.gen(function* () {
+          const adapter = yield* ClaudeAdapter;
+
+          const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+
+          yield* adapter.startSession({
+            threadId: THREAD_ID,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            runtimeMode: "full-access",
+          });
+          yield* adapter.sendTurn({
+            threadId: THREAD_ID,
+            input: "hello",
+            attachments: [],
+          });
+
+          harness.query.emit({
+            type: "result",
+            subtype: "error_during_execution",
+            is_error: true,
+            errors: ["Rate limit exceeded. Please wait and try again."],
+            session_id: "sdk-session-hop",
+            uuid: "result-hop",
+          } as unknown as SDKMessage);
+
+          const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+          assert.deepEqual(
+            runtimeEvents.map((event) => event.type),
+            [
+              "session.started",
+              "session.configured",
+              "session.state.changed",
+              "turn.started",
+              "thread.started",
+              "runtime.error",
+              "turn.completed",
+              "runtime.warning",
+              "session.exited",
+            ],
+          );
+
+          const warning = runtimeEvents.find((event) => event.type === "runtime.warning");
+          assert.equal(warning?.type, "runtime.warning");
+          if (warning?.type === "runtime.warning") {
+            assert.equal(
+              warning.payload.message,
+              'Broker account "acct-a" hit its rate limit. Switching accounts before the next turn.',
+            );
+            assert.deepEqual(warning.payload.detail, { event: "account-hop", account: "acct-a" });
+          }
+
+          assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+          assert.equal(harness.query.closeCalls, 1);
+        }).pipe(
+          Effect.provideService(Random.Random, makeDeterministicRandomService()),
+          Effect.provide(harness.layer),
+        );
+      },
+    );
+
+    it.effect(
+      "same rate-limit text on a non-brokered session does not tear the session down",
+      () => {
+        const harness = makeHarness();
+        return Effect.gen(function* () {
+          const adapter = yield* ClaudeAdapter;
+
+          const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+
+          yield* adapter.startSession({
+            threadId: THREAD_ID,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            runtimeMode: "full-access",
+          });
+          yield* adapter.sendTurn({
+            threadId: THREAD_ID,
+            input: "hello",
+            attachments: [],
+          });
+
+          harness.query.emit({
+            type: "result",
+            subtype: "error_during_execution",
+            is_error: true,
+            errors: ["Rate limit exceeded. Please wait and try again."],
+            session_id: "sdk-session-no-broker",
+            uuid: "result-no-broker",
+          } as unknown as SDKMessage);
+
+          const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+          assert.deepEqual(
+            runtimeEvents.map((event) => event.type),
+            [
+              "session.started",
+              "session.configured",
+              "session.state.changed",
+              "turn.started",
+              "thread.started",
+              "runtime.error",
+              "turn.completed",
+            ],
+          );
+
+          assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+          assert.equal(harness.query.closeCalls, 0);
+        }).pipe(
+          Effect.provideService(Random.Random, makeDeterministicRandomService()),
+          Effect.provide(harness.layer),
+        );
+      },
+    );
+
+    it.effect("529/overloaded failure on a brokered session does not hop", () => {
+      const harness = makeBrokeredHarness({
+        onRequest: (_req, res) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ setup_token: "sk-broker-token", account: "acct-a" }));
+        },
+        environment: { AIGATE_TOKEN: "test-broker-token" },
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          attachments: [],
+        });
+
+        harness.query.emit({
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          errors: ["529: Claude is currently overloaded. Try again shortly."],
+          session_id: "sdk-session-overloaded",
+          uuid: "result-overloaded",
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        assert.deepEqual(
+          runtimeEvents.map((event) => event.type),
+          [
+            "session.started",
+            "session.configured",
+            "session.state.changed",
+            "turn.started",
+            "thread.started",
+            "runtime.error",
+            "turn.completed",
+          ],
+        );
+
+        assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+        assert.equal(harness.query.closeCalls, 0);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    });
+
+    it.effect("next startSession for the thread passes the hopped account as exclude", () => {
+      const selectUrls: Array<string> = [];
+      const harness = makeBrokeredHarness({
+        onRequest: (req, res) => {
+          const url = req.url ?? "";
+          if (url.startsWith("/api/select")) {
+            selectUrls.push(url);
+          }
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ setup_token: "sk-broker-token", account: "acct-a" }));
+        },
+        environment: { AIGATE_TOKEN: "test-broker-token" },
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const sessionExitedFiber = yield* Stream.filter(
+          adapter.streamEvents,
+          (event) => event.type === "session.exited",
+        ).pipe(Stream.runHead, Effect.forkChild);
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          attachments: [],
+        });
+
+        harness.query.emit({
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          errors: ["Rate limit exceeded. Please wait and try again."],
+          session_id: "sdk-session-hop-exclude",
+          uuid: "result-hop-exclude",
+        } as unknown as SDKMessage);
+
+        const exited = yield* Fiber.join(sessionExitedFiber);
+        assert.equal(exited._tag, "Some");
+
+        // The next startSession for this thread is the "re-entry" leg: it
+        // must reconstruct the query through the same broker seam, now
+        // excluding the account the last turn hopped away from.
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+
+        assert.equal(selectUrls.length, 2);
+        assert.equal(selectUrls[0]?.includes("exclude="), false);
+        assert.equal(selectUrls[1]?.includes("exclude=acct-a"), true);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    });
   });
 });
