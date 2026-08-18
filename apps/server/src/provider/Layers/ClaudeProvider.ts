@@ -27,6 +27,8 @@ import {
   type SDKUserMessage,
   type SettingSource,
 } from "@anthropic-ai/claude-agent-sdk";
+// @effect-diagnostics nodeBuiltinImport:off -- hostname for the broker's `host` query param, mirrors ClaudeAdapter.ts.
+import * as NodeOS from "node:os";
 
 import {
   buildBooleanOptionDescriptor,
@@ -42,6 +44,11 @@ import {
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+import {
+  applyBrokerResolution,
+  DEFAULT_BROKER_TOKEN_ENV,
+  resolveBrokerEnvironment,
+} from "./ClaudeCredentialBroker.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -741,6 +748,17 @@ const probeClaudeCapabilities = (
       claudeSettings.binaryPath,
       claudeEnvironment,
     );
+    // A configured broker picks the account to probe *before* the health-check
+    // spawn, so the auth block this probe feeds into reports the brokered
+    // account rather than the instance's baseline credentials. An empty
+    // brokerUrl short-circuits inside resolveBrokerEnvironment before any
+    // fetch, so non-brokered instances never pay the broker timeout.
+    const brokerResolution = yield* resolveBrokerEnvironment({
+      brokerUrl: claudeSettings.brokerUrl,
+      token: claudeEnvironment[claudeSettings.brokerTokenEnv || DEFAULT_BROKER_TOKEN_ENV],
+      host: NodeOS.hostname(),
+    });
+    const queryEnvironment = applyBrokerResolution(claudeEnvironment, brokerResolution);
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // Never yield — we only need initialization data, not a conversation.
@@ -752,7 +770,7 @@ const probeClaudeCapabilities = (
         options: buildClaudeCapabilitiesProbeQueryOptions({
           executablePath,
           abortController: abort,
-          environment: claudeEnvironment,
+          environment: queryEnvironment,
           cwd,
         }),
       });
