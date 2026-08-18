@@ -347,3 +347,11 @@ and falls back to the instance's own credentials.
 The broker endpoint must be aigate-compatible: it accepts `GET /api/select?host={hostname}` with
 an `Authorization: Bearer {token}` header and returns JSON with `account` and `setup_token`
 fields.
+
+### Important: Use an Absolute Binary Path
+
+When using a credential broker, **set your provider's `Binary path` to an absolute path** (e.g.,
+`/usr/local/bin/claude`), not a bare `claude`. A bare path resolves through your system's PATH
+and may pick up a wrapper script that injects its own credentials, silently overriding the
+broker's injected credentials. An absolute path ensures T3 Code calls the real Claude binary with
+your broker-selected credentials.
