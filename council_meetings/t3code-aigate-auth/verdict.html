@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Council: T3 Code × aigate</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css" />
+    <style>
+      body {
+        max-width: 960px;
+      }
+      .v {
+        color: #2e7d32;
+        font-weight: 600;
+      }
+      .t {
+        color: #b26a00;
+        font-weight: 600;
+      }
+      .c {
+        color: #ad1457;
+        font-weight: 600;
+      }
+      .u {
+        color: #546e7a;
+        font-weight: 600;
+      }
+      td,
+      th {
+        vertical-align: top;
+        font-size: 0.92em;
+      }
+      .seat {
+        border-left: 4px solid #888;
+        padding-left: 0.8em;
+        margin: 1em 0;
+      }
+      code {
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Matrix Council — T3 Code × aigate</h1>
+    <p>
+      <em
+        >2026-08-17/18 · 2 rounds · 5/6 seats reachable (Niobe/qwen starved both rounds, treated
+        absent) · 2 Operators · 8 chair experiments</em
+      >
+    </p>
+
+    <h2>The question</h2>
+    <p>
+      How should T3 Code use aigate (deployed on .10, <code>https://aigate.shoemoney.ai</code>) for
+      authentication and model listing — selecting among Claude setup-token accounts with the most
+      headroom, hopping when one runs dry (as the shell warden <code>aigate-run.sh</code> does), and
+      surfacing alt-endpoint models like Muse — as a first-class T3 Code feature?
+    </p>
+
+    <h2>Verdict — <span class="v">VERIFIED-backed consensus (converged in substance)</span></h2>
+    <p>
+      <strong
+        >Opt-in generic credential broker, Claude-only v1, resolved at session start through the
+        existing per-instance env seam under per-instance <code>CLAUDE_CONFIG_DIR</code> isolation.
+        No Keychain manipulation. Account hop is Phase&nbsp;2, turn-boundary only, via kill-query →
+        re-select → recreate-with-resume-cursor. Muse/Kimi are T3-side route profiles (env overlays
+        + per-instance additional models), never an aigate endpoint. Codex/Cursor/Grok/OpenCode
+        explicitly unsupported. Fork-first; one small generic hook is the sole upstream
+        candidate.</strong
+      >
+      Full implementation plan: <code>plan.md</code> beside this file.
+    </p>
+    <p>
+      <em>Chair ruling note:</em> round-2 seats voted ready=1, not-ready=4 — but every not-ready
+      condition named the same items (no Keychain deletion, no CredentialBroker cathedral, no aigate
+      models endpoint, cross-account resume proven). The chair ran the deciding experiment (EXP-8,
+      passed) and rules the conditions honored. Recorded per the "conditions-as-verdict" pattern.
+    </p>
+
+    <h2>Claims table (load-bearing)</h2>
+    <table>
+      <tr>
+        <th>Claim</th>
+        <th>Status</th>
+        <th>Evidence</th>
+        <th>Who</th>
+      </tr>
+      <tr>
+        <td>
+          Injected <code>CLAUDE_CODE_OAUTH_TOKEN</code> beats any stored Keychain login when
+          <code>CLAUDE_CONFIG_DIR</code> is isolated; Keychain does not rescue a bogus token
+        </td>
+        <td class="v">VERIFIED</td>
+        <td>
+          EXP-1: bogus token → <code>401 OAuth access token is invalid</code>; live aigate token →
+          success. Same binary the SDK spawns
+        </td>
+        <td>Chair</td>
+      </tr>
+      <tr>
+        <td>A session minted under account A resumes under account B with full context</td>
+        <td class="v">VERIFIED</td>
+        <td>
+          EXP-8: codeword planted under bastardtech returned verbatim under personal via
+          <code>--resume</code> (n=1, clean turn boundary)
+        </td>
+        <td>Chair</td>
+      </tr>
+      <tr>
+        <td>
+          One long-lived SDK <code>query()</code> per thread; resume cursor exists for re-creation
+        </td>
+        <td class="v">VERIFIED</td>
+        <td>
+          EXP-3: <code>ClaudeAdapter.ts:4221</code>, sessions Map <code>:4280</code>,
+          <code>readClaudeResumeState</code>
+        </td>
+        <td>Chair + Tank</td>
+      </tr>
+      <tr>
+        <td>
+          Env is frozen at adapter construction — per-session broker resolution needs new code
+        </td>
+        <td class="v">VERIFIED</td>
+        <td>
+          EXP-4: <code>makeClaudeEnvironment :1663</code> reused at <code>:4176</code>. (Seat's
+          round-1 CONTESTED claim, confirmed)
+        </td>
+        <td>Seraph → Chair</td>
+      </tr>
+      <tr>
+        <td>
+          <code>mergeProviderInstanceEnvironment</code> does not mutate <code>process.env</code>;
+          concurrent instances can't clobber each other
+        </td>
+        <td class="v">VERIFIED</td>
+        <td>EXP-4: spreads into a fresh object (<code>ProviderInstanceEnvironment.ts:11</code>)</td>
+        <td>Chair</td>
+      </tr>
+      <tr>
+        <td>T3 already ingests typed rate-limit telemetry</td>
+        <td class="v">VERIFIED</td>
+        <td>
+          EXP-5: SDK <code>rate_limit_event</code> →
+          <code>account.rate-limits.updated</code> (<code>:3507-3552</code>)
+        </td>
+        <td>Chair</td>
+      </tr>
+      <tr>
+        <td>
+          aigate has no models endpoint and no rotation state machine; selection = ranked
+          best-headroom + TTL parking
+        </td>
+        <td class="v">VERIFIED</td>
+        <td>Operator map: <code>pickRanked src/server.js:295</code>; no plan/rotate matches</td>
+        <td>Operator</td>
+      </tr>
+      <tr>
+        <td>
+          <code>/api/select</code> has no lease; duplicate cross-host picks heal via parking +
+          polling
+        </td>
+        <td class="v">VERIFIED</td>
+        <td>EXP-7: plain ranked SELECT</td>
+        <td>Chair</td>
+      </tr>
+      <tr>
+        <td>Model catalog gates the picker, not execution — pseudo-model slugs pass through</td>
+        <td class="v">VERIFIED</td>
+        <td>EXP-6: <code>resolveClaudeApiModelId</code> pass-through</td>
+        <td>Chair</td>
+      </tr>
+      <tr>
+        <td>Codex/ChatGPT rotation has no live backend</td>
+        <td class="v">VERIFIED</td>
+        <td>gpt rung retired 2026-08-04 (402 out-of-credits) in <code>aigate-run.sh</code></td>
+        <td>Operator</td>
+      </tr>
+      <tr>
+        <td>
+          Muse route needs tier-mapping + context-cap + settings overrides, not just a model name
+        </td>
+        <td class="v">VERIFIED</td>
+        <td>
+          <code>aigate-muse.sh</code>: tier envs,
+          <code>CLAUDE_CODE_MAX_CONTEXT_TOKENS=1007997</code>, 64-char tool-name limit
+        </td>
+        <td>Chair</td>
+      </tr>
+      <tr>
+        <td>Turn-boundary hopping is safe under T3's event-sourced turn machinery</td>
+        <td class="t">THEORY</td>
+        <td>Mechanism verified; mid-tool-call interrupt + hop untested → test T3</td>
+        <td>All seats</td>
+      </tr>
+      <tr>
+        <td>
+          Explicit SDK <code>model:</code> option breaks alt-endpoint instances with claude slugs
+        </td>
+        <td class="u">UNMEASURED</td>
+        <td>Named test T1 (muse 404 expectation)</td>
+        <td>Seraph</td>
+      </tr>
+    </table>
+
+    <h2>Retractions (9 — the council moved on evidence)</h2>
+    <ul>
+      <li>
+        <strong>Mouse (grok):</strong> retracted "Keychain shadowing is UNMEASURED and blocks all
+        design" → VERIFIED safe under isolation (EXP-1); retracted "sidecar-only, any in-process
+        select is cathedral" → a tiny in-process select is acceptable; retracted "defer all hop
+        discussion" → mechanism known (EXP-3).
+      </li>
+      <li>
+        <strong>Seraph (kimi):</strong> retracted the process-env race concern (EXP-4 disproved),
+        the Keychain blocker (EXP-1), the per-turn-spawn hop premise ("the antecedent is false" —
+        EXP-3), and the regex-classifier necessity (typed <code>rate_limit_event</code> exists).
+      </li>
+      <li>
+        <strong>Tank (deepseek):</strong> retracted Keychain-clearing necessity — "completely
+        unnecessary under T3's architecture"; retracted own UNMEASURED shadowing claim.
+      </li>
+      <li>
+        <strong>Morpheus (gpt-5.6):</strong> retracted "precedence wholly unmeasured" and "defer
+        hopping pending lifecycle" (EXP-1/EXP-3).
+      </li>
+      <li>
+        <strong>Trinity (gemini):</strong> retracted the Keychain-delete requirement carried from
+        the warden design.
+      </li>
+    </ul>
+
+    <h2>Dissents → conditions honored</h2>
+    <ul>
+      <li>
+        <strong>Mouse:</strong> no first-class CredentialBroker cathedral, no aigate models API, no
+        Keychain clearing, no Codex v1 → all four are in the verdict.
+      </li>
+      <li>
+        <strong>Seraph/Morpheus:</strong> cross-account resume must be proven before hop ships →
+        EXP-8 passed; mid-tool-call variant stays a named gate (T3) on Phase 2.
+      </li>
+      <li>
+        <strong>Tank:</strong> no aigate-specific code in core, no new aigate endpoint → generic
+        hook + external adapter module.
+      </li>
+    </ul>
+
+    <h2>Still open</h2>
+    <ol>
+      <li>
+        <strong>T1</strong> — alt-endpoint instance vs explicit SDK model option (muse 404 risk) →
+        settles per-instance <code>additionalModels</code>.
+      </li>
+      <li>
+        <strong>T2</strong> — capabilities probe reflects the injected account's email (expected
+        yes).
+      </li>
+      <li><strong>T3</strong> — hop after mid-tool-call interrupt: no duplicated side effects.</li>
+      <li>
+        <strong>T4</strong> — EXP-1 bogus-token probe as a pinned regression against future claude
+        binaries.
+      </li>
+    </ol>
+
+    <h2>Chair's verification (what was independently checked)</h2>
+    <p>
+      Live aigate state (3 accounts, select response shape) via curl; the full warden mechanism read
+      from <code>aigate-run.sh</code>/<code>aigate-muse.sh</code>; EXP-1 auth-precedence probes (one
+      contaminated by <code>--bare</code>, rerun clean); repo reads for env seam, query lifecycle,
+      rate-limit mapping, model resolution; aigate <code>pickRanked</code> SQL; EXP-8 cross-account
+      resume. Two round-1 member claims were corrected by chair evidence (env-freeze
+      CONTESTED→VERIFIED in the seat's favor; Keychain UNMEASURED→VERIFIED against the warden's
+      assumption applying to T3).
+    </p>
+
+    <h2>Per-member final positions (round 2)</h2>
+    <div class="seat">
+      <strong>Morpheus</strong> (gpt-5.6-luna-pro) — fork-first generic broker seam, aigate adapter
+      outside core, dynamic resolution at query creation; hop only at turn boundary. Not-ready
+      pending resume test (now run).
+    </div>
+    <div class="seat">
+      <strong>Trinity</strong> (gemini-3.6-flash) — ready. Upstreamable generic interface + aigate
+      adapter; select at session start and turn boundaries; telemetry-driven parking; Muse/Kimi
+      static route profiles.
+    </div>
+    <div class="seat">
+      <strong>Mouse</strong> (grok-4.5) — v1 is dumb instances + optional select at adapter build;
+      multi-instance is the account primitive; hop is phase 2; hard no to
+      cathedrals/models-API/Keychain/Codex.
+    </div>
+    <div class="seat">
+      <strong>Tank</strong> (deepseek-v4-flash) — fork-first env-seam injection, session-start
+      resolution, static route profiles, Codex no-op; minimum viable = generic spawn-time env hook
+      backable by aigate.
+    </div>
+    <div class="seat">
+      <strong>Seraph</strong> (kimi-k3) — both zero-code gates passed (EXP-1/EXP-4); opt-in broker
+      at query construction behind a no-op default; signs the shape given the resume test (now run)
+      and mid-tool-call gate on Phase 2.
+    </div>
+    <div class="seat">
+      <strong>Niobe</strong> (qwen3.8-max) — absent both rounds (token starvation at 12k; empty
+      content). Not counted.
+    </div>
+  </body>
+</html>
