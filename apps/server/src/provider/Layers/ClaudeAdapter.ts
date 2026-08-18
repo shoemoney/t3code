@@ -57,6 +57,8 @@ import {
   getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
+import * as NodeOS from "node:os";
+
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -77,6 +79,11 @@ import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import {
+  applyBrokerResolution,
+  DEFAULT_BROKER_TOKEN_ENV,
+  resolveBrokerEnvironment,
+} from "./ClaudeCredentialBroker.ts";
 import {
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
@@ -4151,6 +4158,21 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? [input.cwd] : []),
         serverConfig.attachmentsDir,
       ];
+      // Resolved per turn (not cached per session): a hanging broker adds up to
+      // BROKER_REQUEST_TIMEOUT_MS to every turn's start. Add memoization with a short TTL
+      // if that latency becomes measurable in practice.
+      const brokerResolution = yield* resolveBrokerEnvironment({
+        brokerUrl: claudeSettings.brokerUrl,
+        token: claudeEnvironment[claudeSettings.brokerTokenEnv || DEFAULT_BROKER_TOKEN_ENV],
+        host: NodeOS.hostname(),
+      });
+      if (brokerResolution._tag !== "ok" && brokerResolution._tag !== "disabled") {
+        yield* Effect.logWarning(
+          "credential broker did not resolve — session uses instance credentials",
+          { providerInstanceId: boundInstanceId, brokerStatus: brokerResolution._tag },
+        );
+      }
+      const queryEnvironment = applyBrokerResolution(claudeEnvironment, brokerResolution);
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -4173,7 +4195,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
-        env: claudeEnvironment,
+        env: queryEnvironment,
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpSession
@@ -4214,6 +4236,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
         "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",
         "claude.query.path_to_executable": claudeBinaryPath,
+        "claude.broker.status": brokerResolution._tag,
+        "claude.broker.account": brokerResolution._tag === "ok" ? brokerResolution.account : "",
       });
 
       const queryRuntime = yield* Effect.try({

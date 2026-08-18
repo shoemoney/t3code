@@ -1,0 +1,73 @@
+{
+  "position": "T3 Code should integrate aigate as a credential broker via env injection at the existing `mergeProviderInstanceEnvironment` point, plus a new `aigateProvider` property on the instance config that auto-populates `CLAUDE_CODE_OAUTH_TOKEN`, `AIGATE_ACCOUNT`, and optionally `ANTHROPIC_BASE_URL`. The integration must be (a) optional \u2014 aigate is off by default, (b) generic \u2014 the broker URL and token come from `~/.t3/userdata/secrets/aigate.json`, not hardcoded, (c) minimal \u2014 touch < 5 files in the server (ClaudeProvider, ClaudeDriver, ClaudeAdapter, ProviderConfig, contracts). Model listing for non-Anthropic models like Muse/Kimi is out of scope for v1: those are \"provider instances with custom env\" today (user creates a Claude instance named \"muse\" with `ANTHROPIC_BASE_URL` override), not a T3-or-aigate problem. The Monday-shippable step: `claudeProvider` supports a `useAigate: boolean` + `aigateHost` field; on instantiation, if true, call `GET /api/select?host=...` and inject the returned token+account into the per-instance env, otherwise behave exactly as before.",
+  "claims": [
+    {
+      "claim": "aigate-run.sh's keychain-delete trick (macOS) bypasses a stored Claude login that otherwise outranks injected CLAUDE_CODE_OAUTH_TOKEN. If T3 uses the Agent SDK with per-instance CLAUDE_CONFIG_DIR (separate from ~/.claude/), this shadowing may not apply \u2014 but it is UNMEASURED and the experiment is: start two T3 provider instances, one with aigate token injected, another with a stored login in its custom CLAUDE_CONFIG_DIR; verify which token the SDK's query() actually uses by examining the Authorization header on an intercepted request.",
+      "status": "UNMEASURED",
+      "evidence": "Chair's cross-cutting hazard: aigate-run.sh documents that on macOS the claude binary rewrites the Keychain entry ~1s after launch and stored login beats env injection. The Agent SDK path T3 uses may create a separate credential store per CLAUDE_CONFIG_DIR (analysis of SDK source would settle this with a config-dir corruption test). No experiment has been run yet.",
+      "test": "Set up a test T3 instance with CLAUDE_CONFIG_DIR=/tmp/t3test, inject AIGATE_ACCOUNT=test via env, run a probe query, intercept outgoing request headers at the network level. If Authorization matches AIGATE_ACCOUNT's token, shadowing is avoided. If it matches the developer's stored login, shadowing applies even to per-instance config dirs."
+    },
+    {
+      "claim": "aigate has no model-listing endpoint and no model-aware selection logic. It stores provider keys (65 providers) but never enumerates or filters by model.",
+      "status": "VERIFIED",
+      "evidence": "Chair's repo inspection: aigate/src/server.js lines 295-298 `pickRanked` selects by headroom only; `src/providers.js` is a key catalog, no models. `GET /api/capabilities` returns key counts and selectable-account counts but no models. Git log confirms no models table ever added.",
+      "test": ""
+    },
+    {
+      "claim": "T3 Code's existing `mergeProviderInstanceEnvironment` and `ServerSecretStore` can inject arbitrary env vars per provider instance, including CLAUDE_CODE_OAUTH_TOKEN and AIGATE_ACCOUNT, without modifying the Claude SDK query() call site.",
+      "status": "VERIFIED",
+      "evidence": "Chair-verified: `ProviderInstanceEnvironment.ts:3-16` overlays per-instance vars, `packages/contracts/src/providerInstance.ts:104-113` defines `ProviderInstanceEnvironmentVariable` with `sensitive` flag, `serverSettings.ts:316-376` shows secrets stored in `~/.t3/userdata/secrets/*.bin`. A test already exercises `ANTHROPIC_API_KEY` through this path. `Drivers/ClaudeDriver.ts:128` calls mergeProviderInstanceEnvironment before spawning the SDK.",
+      "test": ""
+    },
+    {
+      "claim": "The `aigate-run.sh` retry/park/rotate logic (up to 3 attempts on headless, account parking via POST /api/events/limit, re-select with exclude=) is unnecessary for T3's integration because T3 manages retries at the turn level and can probe headroom via /api/accounts rather than parsing stderr. However, the 'interactive supervision' feature (re-launch with --continue on a new account) does not map to T3's architecture where sessions span many turns via stream-json, not process restarts.",
+      "status": "VERIFIED",
+      "evidence": "Chair reading of aigate-run.sh: retry loop is for headless `-p` mode; interactive supervision checks usage on exit and relaunches the claude binary with --continue. T3 uses `@anthropic-ai/claude-agent-sdk` `query()` which is a streaming API call, not a process lifecycle. The --continue mechanism is not used by T3. Source: T3's ClaudeAdapter.ts passes options to query(), no --continue flag observed.",
+      "test": ""
+    },
+    {
+      "claim": "Codex/Cursor/Grok/OpenCode account rotation is out of scope for v1. Only Claude provider instances will support the aigate broker, because aigate's primary select/accounts/events APIs are Claude-specific (token type sk-ant-oat\u2026, Anthropic rate-limit headers, Anthropic account introspection).",
+      "status": "VERIFIED",
+      "evidence": "Chair's aigate API inspection: /api/select returns `setup_token` (sk-ant-oat\u2026), /api/accounts rate-limit fields are `anthropic-ratelimit-unified-{5h,7d}`, /api/events/limit and /api/events/usage are Anthropic-account-aware. aigate has keys for other providers (OpenAI, Grok, etc.) but no select/accounts/limit posture for them. The gpt rung is retired (aigate-gpt.sh 402s, retired 2026-08-04 per chair).",
+      "test": ""
+    },
+    {
+      "claim": "The cross-machine state conflict (keychain clearing on Mac when T3 desktop and ai CLI share a box) is a real concern: aigate-run.sh deletes the developer's real Claude login. If T3 desktop app on the same Mac also relies on stored login (for its non-aigate Claude instance), the two mechanisms conflict. Mitigation: T3's aigate integration must use per-instance CLAUDE_CONFIG_DIR (already done) to isolate its credential store from the system ~/.claude, avoiding the keychain altogether.",
+      "status": "THEORY",
+      "evidence": "The conflict is documented in aigate-run.sh ('Shadow-login clear'). T3 already sets CLAUDE_CONFIG_DIR per instance (ClaudeHome.ts:27-33). The theory that this isolates the credential store is plausible but unverified: the SDK may fall back to Keychain regardless of CLAUDE_CONFIG_DIR. Test: run a T3 instance with custom CLAUDE_CONFIG_DIR and no ANTHROPIC_API_KEY env; if the SDK creates its own credentials file in that dir and uses it, isolation works. If it still reads the system Keychain, it doesn't.",
+      "test": "Run T3 with a custom empty CLAUDE_CONFIG_DIR, no auth env vars; if SDK creates .credentials.json inside that dir, isolation works. If it attempts to read system keychain and fails, isolation incomplete."
+    },
+    {
+      "claim": "Muse/Kimi models can be supported in T3 today as custom Claude provider instances with `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` overrides, without any aigate integration. The `aigate-muse.sh` env-injection pattern is exactly what T3's `mergeProviderInstanceEnvironment` does natively.",
+      "status": "VERIFIED",
+      "evidence": "Chair's aigate-muse.sh analysis: sets `ANTHROPIC_BASE_URL=https://api.meta.ai`, `ANTHROPIC_AUTH_TOKEN=<LLM|key>`, maps models via env vars. This is identical to T3's per-instance env injection mechanism. No special T3 code needed \u2014 user creates a provider instance with those env vars. T3's ClaudeAdapter already respects ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN (they are passed through mergeProviderInstanceEnvironment).",
+      "test": ""
+    }
+  ],
+  "challenges": [
+    {
+      "member": "brief",
+      "their_claim": "The integration plan should include model listing for non-Anthropic models (Muse, Kimi K3) as a first-class feature.",
+      "problem": "aigate has no model-listing endpoint. Adding one would require a new aigate endpoint that enumerates models from provider APIs (Meta, Kimi) \u2014 significant work on the aigate side with no clear contract for what 'listing models' means across providers. Meanwhile, T3 users can manually configure Muse/Kimi as Claude instances today via env overrides, with model names set per-instance. The model listing ask conflates credential brokering with model discovery, which are separable concerns. The Monday smallest shippable step does not need this.",
+      "test": "Remove the model-listing requirement from v1 scope; validate by confirming that a user can set up a 'muse' Claude instance in T3 with ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN and have it work for a turn."
+    },
+    {
+      "member": "brief",
+      "their_claim": "The integration should support account rotation mid-session (hop accounts when headroom runs dry during a conversation).",
+      "problem": "aigate-run.sh rotates between processes, restarting claude with --continue. T3 sessions are long-lived streaming API calls \u2014 restarting the process would lose the stream state. T3's architecture does not support mid-turn account switch. The 'park and re-select' pattern only makes sense between T3 turns (when the next turn can be routed to a new provider instance with a different account). T3 already supports this: create multiple Claude provider instances (e.g. claude_bastardtech, claude_personal), and the session can be continued on a different instance between turns. But aigate's automated 'out of headroom \u2192 re-select \u2192 relaunch' is not isomorphic to T3's turn-by-turn instance switching. This needs a different pattern (see position: probe headroom before each turn via /api/accounts, skip an instance if its account is low).",
+      "test": "Prove T3 can switch provider instances between turns by building a test where turn 1 goes to claude_bastardtech, turn 2 (manually configured) goes to claude_personal, and the conversation history is preserved via the session manager."
+    }
+  ],
+  "retractions": [],
+  "needs_research": [
+    "Does the Agent SDK's query() respect CLAUDE_CODE_OAUTH_TOKEN even when a valid Keychain login exists under a different CLAUDE_CONFIG_DIR? Experimental cross-check with intercepted headers.",
+    "Does aigate's /api/select accept a provider/model hint to return a key for a specific non-Anthropic provider (e.g., /api/select?host=muse)? The current code only handles sk-ant-oat tokens; what happens if host=muse?",
+    "What is the exact format of aigate's /api/events/limit response when it parks an account? Does it return an error or a success with parking info?",
+    "Can T3's event-sourced server detect a 429/overloaded from the Claude SDK and either retry with backoff (same account) or signal 'try next instance'? The SDK may throw or return an error object \u2014 need to inspect claude-agent-sdk source."
+  ],
+  "consensus_ready": true,
+  "dissent": "None on the v1 scoping. The key open question (Keychain shadowing with per-instance CLAUDE_CONFIG_DIR) must be settled via experiment before any code lands, but the design does not depend on the outcome \u2014 if shadowing occurs, we add an env-override for CLAUDE_CODE_OAUTH_TOKEN that beats Keychain (the SDK likely checks env first; aigate-run.sh's observation that 'stored login outranks injection' may be specific to the interactive CLI, not the SDK). The plan accounts for both outcomes.",
+  "_member": "tank",
+  "_model": "deepseek/deepseek-v4-flash",
+  "_ok": true
+}

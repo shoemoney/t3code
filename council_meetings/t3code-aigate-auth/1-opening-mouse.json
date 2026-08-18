@@ -1,0 +1,100 @@
+{
+  "position": "Stop designing the cathedral. The load-bearing hazard (does Keychain/stored login outrank CLAUDE_CODE_OAUTH_TOKEN under Agent SDK + per-instance CLAUDE_CONFIG_DIR?) is UNMEASURED, and until that experiment runs every integration sketch is fanfic. Use T3's already-native multi-instance primitive as three dumb Claude instances whose env secrets an external aigate side-car refreshes \u2014 zero broker concept in T3 core, zero upstream PR theater, Claude-only v1. Model listing for muse/kimi is T3-side static route config, not aigate's job; aigate has no models API and pretending otherwise invents scope.",
+  "claims": [
+    {
+      "claim": "T3 Claude path is Agent SDK query() with env overlay via mergeProviderInstanceEnvironment, not the interactive claude CLI aigate-run.sh wraps",
+      "status": "VERIFIED",
+      "evidence": "Chair brief: apps/server/src/provider/Layers/ClaudeAdapter.ts ~4154-4192; ProviderInstanceEnvironment.ts:3-16; Drivers/ClaudeDriver.ts:128; packages/contracts ProviderInstanceEnvironmentVariable",
+      "test": ""
+    },
+    {
+      "claim": "aigate is not a proxy and only selects/injects credentials + records usage",
+      "status": "VERIFIED",
+      "evidence": "aigate README/COMPLIANCE.md; GET /api/select returns setup_token; no request path relay",
+      "test": ""
+    },
+    {
+      "claim": "aigate has no model-listing endpoint; capabilities returns key/account counts only",
+      "status": "VERIFIED",
+      "evidence": "Chair/operator: no /api/models; /api/capabilities is read-only registry without model enumeration; providers in src/providers.js are keys not models",
+      "test": ""
+    },
+    {
+      "claim": "Stored macOS Keychain login outranks injected CLAUDE_CODE_OAUTH_TOKEN for the interactive CLI and binary rewrites Keychain ~1s post-launch",
+      "status": "VERIFIED",
+      "evidence": "aigate-run.sh clear_shadow_login behavior documented operationally in brief",
+      "test": ""
+    },
+    {
+      "claim": "Whether Keychain/credential shadowing applies to Agent SDK with CLAUDE_CONFIG_DIR per-instance isolation is unknown and blocks correct injection design",
+      "status": "UNMEASURED",
+      "evidence": "Brief flags as chair-unmeasured; no cited experiment on SDK path",
+      "test": "On macOS: set distinct CLAUDE_CONFIG_DIR, inject CLAUDE_CODE_OAUTH_TOKEN for account A while Keychain holds account B; run SDK query(); read init.account.email / tokenSource from probeClaudeCapabilities; repeat with Keychain cleared. Discriminate: email/tokenSource must match A or injection is a lie."
+    },
+    {
+      "claim": "T3 multi-instance already models multiple accounts of one driver without a broker abstraction",
+      "status": "VERIFIED",
+      "evidence": "ProviderInstanceId isolation; e.g. codex_personal+codex_work; per-instance env + ClaudeHome CLAUDE_CONFIG_DIR",
+      "test": ""
+    },
+    {
+      "claim": "Upstream will not land a substantial aigate/broker feature",
+      "status": "THEORY",
+      "evidence": "CONTRIBUTING.md: not actively accepting contributions; brief notes big features closed; doctrine demands small focused PRs",
+      "test": "Open a minimal design issue/PR adding only optional credential-broker hook interface with no aigate mention; if closed-as-policy, fork/shim path is mandatory."
+    },
+    {
+      "claim": "Mid-thread account hop with conversation continuity works under T3 session management the way aigate does claude --continue",
+      "status": "UNMEASURED",
+      "evidence": "aigate interactive path relaunches with --continue; T3 adapter resume/stream-json semantics not measured against token swap mid-thread",
+      "test": "Start SDK session on account A, force park A, swap env to B's setup_token on same session/thread resume; observe whether resume is accepted or auth/session identity errors."
+    },
+    {
+      "claim": "Muse/Kimi-via-claude-binary is env+base URL routing, not account selection",
+      "status": "VERIFIED",
+      "evidence": "aigate-muse.sh: ANTHROPIC_BASE_URL=https://api.meta.ai, AUTH_TOKEN, model tier env mapping, OAUTH unset; kimi via vault key + Anthropic-compatible endpoint",
+      "test": ""
+    },
+    {
+      "claim": "Codex/ChatGPT rotation is out of scope for v1 given retired gpt rung",
+      "status": "THEORY",
+      "evidence": "Brief: aigate-gpt.sh 402s, workspace out of credits, retired 2026-08-04",
+      "test": "GET aigate /api/keys/openai or codex equivalent + live Codex probe; if no working key and no select path, confirm Claude-only v1."
+    }
+  ],
+  "challenges": [
+    {
+      "member": "brief",
+      "their_claim": "Design the integration plan for T3 Code to use aigate as first-class account selector + model listing",
+      "problem": "Assumes in-process brokering and aigate-served model lists are the goal. aigate has no models API; T3 already has multi-instance; the SDK keychain hazard is unmeasured. First-class broker is the largest, least upstreamable surface.",
+      "test": "Run Keychain/SDK experiment first. If per-instance CLAUDE_CONFIG_DIR isolates creds, implement external side-car that only writes instance secrets + optional exclude/select \u2014 measure LOC in T3 vs shim. If isolation fails, shim/wrapper on pathToClaudeCodeExecutable is the only honest path."
+    },
+    {
+      "member": "brief",
+      "their_claim": "Model listing including muse/kimi should be part of the aigate integration design",
+      "problem": "Conflates credential vault with model catalog. aigate stores keys and Claude account headroom; muse model ids, context token ceilings, tool-name limits, and tier env mapping are client knowledge (aigate-muse.sh). Pushing /api/models into aigate invents an endpoint to avoid a static catalog entry in ClaudeProvider.",
+      "test": "Add muse/kimi as static alternate routes / pseudo-models in T3 catalog gated by optional env; no aigate change. If product needs dynamic discovery, then and only then add aigate /api/models \u2014 until a consumer fails without it, do not build it."
+    },
+    {
+      "member": "brief",
+      "their_claim": "Per-turn headroom pick + hop when dry is the integration shape",
+      "problem": "aigate selects per process launch; T3 threads are long-lived. Per-turn select without proving mid-session hop doubles API chatter and still needs out-of-headroom detection on the T3 side (SDK errors vs aigate poll). Best-headroom at session start + park-on-limit event is the existing proven loop \u2014 per-turn is an unasked upgrade.",
+      "test": "Instrument one long thread: select once at session start; on rate-limit classification POST /api/events/limit and either fail the turn with reselect guidance or resume-hop. Compare failure rate vs per-turn select latency and wrong-account rate."
+    }
+  ],
+  "retractions": [],
+  "needs_research": [
+    "Keychain vs CLAUDE_CODE_OAUTH_TOKEN winner under Agent SDK + CLAUDE_CONFIG_DIR (macOS experiment above)",
+    "Linux ~/.claude/.credentials.json vs per-instance CLAUDE_CONFIG_DIR isolation under SDK",
+    "Whether Claude Agent SDK session resume survives OAuth token identity change mid-thread",
+    "Exact pathToClaudeCodeExecutable behavior if pointed at a wrapper script rather than real binary",
+    "Does probeClaudeCapabilities init.account.tokenSource reflect env-injected setup_token reliably?",
+    "Fleet: do desktop T3 and ai CLI on same Mac share Keychain in a way that clear_shadow_login breaks T3 non-aigate instances?",
+    "Codex adapter auth surface \u2014 any equivalent of setup_token rotation or only API keys?"
+  ],
+  "consensus_ready": false,
+  "dissent": "I will not agree to a first-class in-server 'credential broker' abstraction, aigate-specific URLs in contracts, or an aigate /api/models dependency until (1) the SDK credential-shadow experiment is run and logged, and (2) a side-car-or-shim design that only uses existing ProviderInstanceEnvironment + multi-instance is shown insufficient. Monday morning ship: the macOS/Linux credential isolation experiment + a 1-page decision (shim vs secret-writer side-car vs in-tree broker) with file touchpoints \u2014 not code that calls aigate.",
+  "_member": "mouse",
+  "_model": "x-ai/grok-4.5",
+  "_ok": true
+}

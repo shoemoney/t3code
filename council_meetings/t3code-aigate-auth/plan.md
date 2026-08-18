@@ -131,6 +131,10 @@ one concern). Offer it as a Discussion first per CONTRIBUTING.md; expect no.
   own interactive `claude`. The two coexist precisely because T3 never touches shared state.
 - Setup tokens are long-lived with no refresh: broker 401 → surface "re-auth needed on aigate"
   in provider status, don't retry-loop.
+- **PATH-shim hazard (EXP-9, VERIFIED):** agent runners (e.g. cmux) prepend shim dirs to PATH
+  whose `claude` wrapper injects its own credentials — silently overriding brokered injection.
+  A brokered instance whose binaryPath is bare "claude" inherits this risk from the server's
+  PATH; prefer absolute binary paths, and the T4 probe now hard-fails on shim-resolved binaries.
 
 ## Still open — named experiments
 

@@ -1,0 +1,126 @@
+{
+  "position": "[THEORY] Ship a fork-first, optional generic credential-broker seam, with an aigate adapter outside the core provider and dynamic resolution at Claude query/session creation; do not implement a zero-diff wrapper because T3 must report limits and preserve event-sourced state. [VERIFIED] Use per-instance CLAUDE_CONFIG_DIR and child env injection, select the best-headroom Claude account at session start, park on typed quota failures, and hop only at a turn boundary by recreating the SDK query with its resume cursor. [THEORY] Represent native Claude, Muse, and Kimi K3 as versioned T3-side route profiles rather than aigate-discovered models; Claude is the only brokered provider in v1, while Codex, Cursor, Grok, and OpenCode remain unchanged. [THEORY] Monday's smallest step is an integration spike that proves SDK identity with account A versus conflicting Keychain account B, then adds a no-op broker interface plus an aigate selector test before any client UI work.",
+  "claims": [
+    {
+      "claim": "T3's current Claude environment path creates a per-instance environment object rather than mutating the server-global process environment, so concurrent provider instances do not inherently overwrite one another's credentials.",
+      "status": "VERIFIED",
+      "evidence": "Chair verification EXP-4: mergeProviderInstanceEnvironment() in apps/server/src/provider/ProviderInstanceEnvironment.ts:3-16 spreads into a new object; it is called by Drivers/ClaudeDriver.ts:128, and ClaudeAdapter.ts:4176 passes the resulting env to query().",
+      "test": ""
+    },
+    {
+      "claim": "The Agent SDK maintains one long-lived query per T3 thread, but T3 has a resume-cursor path that can create a new query for a later turn.",
+      "status": "VERIFIED",
+      "evidence": "Chair verification EXP-3: ClaudeAdapter.ts createQuery() at approximately :4221 stores ClaudeSessionContext instances around :4280; readClaudeResumeState, resume, and resumeSessionAt support recreating a query from a prior session.",
+      "test": ""
+    },
+    {
+      "claim": "Account hopping should be implemented only at a turn boundary in v1, not during a streamed turn.",
+      "status": "THEORY",
+      "evidence": "EXP-3 establishes the long-lived query and resume mechanism; aigate-run.sh changes accounts by launching a new process and continuing. A mid-stream credential change could duplicate or lose tool effects.",
+      "test": "Run a disposable two-account test that exhausts account A after a partial tool interaction, recreates the query with account B and the resume cursor, and verifies no duplicated tool calls, lost context, or protocol corruption."
+    },
+    {
+      "claim": "T3 already receives rate-limit telemetry that can drive limit reporting and account parking without parsing human-readable CLI output.",
+      "status": "VERIFIED",
+      "evidence": "Chair verification EXP-5: SDK rate_limit_event messages are mapped to account.rate-limits.updated orchestration events in ClaudeAdapter.ts:3507-3552.",
+      "test": ""
+    },
+    {
+      "claim": "aigate's current selector is suitable for coarse best-headroom selection but is not a lease or transaction, so per-turn selection across many hosts may assign the same account concurrently.",
+      "status": "VERIFIED",
+      "evidence": "aigate src/server.js:295-298 implements pickRanked; the supplied inspection found no lease/transaction, and /api/select returns an account plus setup_token using caller-supplied exclusions.",
+      "test": "Issue parallel /api/select requests from multiple hosts, record duplicate assignments, and measure whether parking and polling recover within the configured TTL."
+    },
+    {
+      "claim": "Muse and Kimi K3 should be modeled as T3-side route profiles with explicit environment overlays, not as ordinary Anthropic account selections.",
+      "status": "THEORY",
+      "evidence": "aigate-muse.sh requires api.meta.ai, bearer authentication, all-tier model mapping, a 1,007,997 context limit, and a tool-name workaround; Kimi likewise uses a separate Anthropic-compatible endpoint and auth family. aigate has no model endpoint.",
+      "test": "Implement native Claude, Muse, and Kimi profiles and verify model-picker entries, endpoint/auth isolation, context behavior, tier mapping, tool compatibility, and successful probes for each profile."
+    },
+    {
+      "claim": "aigate cannot provide model listing today, because /api/capabilities reports provider key counts and Claude account counts but no model identifiers.",
+      "status": "VERIFIED",
+      "evidence": "Operator and chair repository inspection: aigate/src/providers.js is a provider-key catalog; no /api/models endpoint exists; /api/capabilities contains registry counts and selectable Claude-account counts only.",
+      "test": ""
+    },
+    {
+      "claim": "The broker must be generic and optional, with a no-op implementation preserving current behavior and an aigate adapter configured by user-supplied URL and secret rather than a hardcoded LAN address.",
+      "status": "THEORY",
+      "evidence": "AGENTS.md requires optional, generic, remote-ready integrations; T3 already provides ProviderInstanceEnvironmentVariable sensitive storage through packages/contracts/src/providerInstance.ts:104-113 and ServerSecretStore in serverSettings.ts:316-376.",
+      "test": "Run the full provider and session test suites with the broker disabled and compare behavior against the pre-broker baseline; run an aigate outage test and confirm fail-closed behavior without secret leakage or silent fallback to the wrong account."
+    },
+    {
+      "claim": "Claude is the only provider with aigate account rotation in v1; Codex, Cursor, Grok, and OpenCode receive explicit no-integration decisions.",
+      "status": "VERIFIED",
+      "evidence": "The supplied aigate API is Claude-specific: /api/select returns Claude setup tokens and /api/accounts exposes Anthropic rate-limit state. The GPT rung was retired on 2026-08-04, and no non-Claude account-selection contract was found.",
+      "test": ""
+    },
+    {
+      "claim": "The fork-first posture is justified, but acceptance of a later upstream generic hook remains unknown rather than established.",
+      "status": "CONTESTED",
+      "evidence": "CONTRIBUTING.md reportedly says the project is not actively accepting contributions, while maintainers accept only small focused PRs; this supports a fork or external package but does not prove a minimal generic hook would be rejected.",
+      "test": "After the fork proves the seam, submit a narrowly scoped provider-agnostic spawn-time credential-resolver proposal with no aigate references and record maintainer disposition."
+    }
+  ],
+  "challenges": [
+    {
+      "member": "Tank",
+      "their_claim": "[THEORY] The Monday step can add useAigate and call /api/select during instantiation, with Muse and Kimi left as manually configured instances.",
+      "problem": "[VERIFIED] EXP-4 shows Claude environment is captured at adapter construction and reused for the long-lived query, so construction-time selection cannot support account hopping or reliable per-turn re-selection. [THEORY] Manual Muse/Kimi instances may work, but the route-specific context, tier, and tool settings need a first-class profile to prevent unsafe partial configuration.",
+      "test": "Trace and test a turn after an account is parked; if the active adapter does not recreate query options with a newly selected token, construction-time selection is insufficient."
+    },
+    {
+      "member": "Mouse",
+      "their_claim": "[THEORY] No T3 broker concept should be added until the Keychain experiment runs, and a sidecar can keep three dumb Claude instances working.",
+      "problem": "[VERIFIED] The chair's EXP-1 and addendum show the same Claude binary honors CLAUDE_CODE_OAUTH_TOKEN under a fresh CLAUDE_CONFIG_DIR, and EXP-4 proves per-instance env objects are concurrency-safe. [UNMEASURED] The exact Agent SDK query identity still requires confirmation, but delaying all architectural work until that result conflates one authentication-risk test with the already-established need for dynamic query recreation and limit events.",
+      "test": "Run query() through probeClaudeCapabilities with conflicting Keychain and injected credentials; use init.account identity and captured request credentials as the discriminator."
+    },
+    {
+      "member": "Seraph",
+      "their_claim": "[THEORY] Mid-thread hopping can resume under T3 because aigate-run.sh proves claude --continue preserves the conversation.",
+      "problem": "[VERIFIED] The CLI's --continue behavior is not proof of Agent SDK resume correctness after streamed tool calls; EXP-3 proves only that a resume cursor exists. Treating the paths as equivalent risks duplicated side effects.",
+      "test": "Force a controlled quota failure after a tool call, recreate the SDK query with resume and account B, and compare tool-call IDs, side effects, and transcript continuity."
+    },
+    {
+      "member": "Trinity",
+      "their_claim": "[THEORY] Phase 1 can map alternate endpoints into distinct provider instances using existing environment injection with no broker concept.",
+      "problem": "[VERIFIED] This supports route configuration but not account selection, limit reporting, parking, or account hopping. A zero-broker phase is a useful smoke test, not the complete integration plan requested by the council.",
+      "test": "Demonstrate selection, telemetry, quota parking, and turn-boundary re-selection in T3 while preserving route-specific Muse/Kimi environments."
+    },
+    {
+      "member": "brief",
+      "their_claim": "[THEORY] The integration should resemble aigate-run.sh closely enough to provide automatic retries and account hopping inside T3.",
+      "problem": "[VERIFIED] aigate-run.sh classifies CLI text and relaunches processes, whereas T3 consumes SDK events through a long-lived query. Directly transplanting the wrapper would not satisfy typed event reporting and could retry after partial tool execution.",
+      "test": "Inject synthetic 429, 529, and partial-stream failures into the SDK adapter and verify that each is classified into safe retry, park-and-hop, or user-visible failure without duplicate effects."
+    }
+  ],
+  "retractions": [
+    {
+      "was": "[CONTESTED] I previously treated credential precedence under T3's Agent SDK and isolated config as wholly unmeasured.",
+      "now": "[VERIFIED with residual uncertainty] The same spawned Claude binary honors an injected OAuth token under a fresh CLAUDE_CONFIG_DIR, and the chair's addendum says this is the practical SDK code path; only direct query() identity confirmation and future-version behavior remain unmeasured.",
+      "because": "Chair EXP-1 and its addendum supplied the missing controlled bogus-token/live-token evidence."
+    },
+    {
+      "was": "[THEORY] I previously proposed deferring account hopping until the query lifecycle was investigated.",
+      "now": "[VERIFIED architecture, THEORY safety] EXP-3 establishes one long-lived query per thread and an available resume cursor, so turn-boundary hop is now the concrete implementation target; safety after partial tool execution remains a testable theory.",
+      "because": "Chair EXP-3 supplied direct ClaudeAdapter lifecycle and resume-state findings."
+    },
+    {
+      "was": "[CONTESTED] I previously described dynamic environment resolution as potentially available through the existing seam.",
+      "now": "[VERIFIED] Environment is captured at adapter construction and reused for query options; dynamic broker resolution requires new code or adapter reconstruction.",
+      "because": "Chair EXP-4 traced makeClaudeEnvironment and queryOptions.env in ClaudeAdapter.ts."
+    }
+  ],
+  "needs_research": [
+    "Does direct @anthropic-ai/claude-agent-sdk query() expose init.account identity matching the injected aigate account under a conflicting macOS Keychain login?",
+    "Which exact T3 contract events, projectors, and web/desktop/mobile components should represent broker selecting, active, parked, exhausted, reauth-required, unavailable, and disabled states?",
+    "What typed SDK event or error preserves HTTP 429, 529, quota, and retry-after information for safe classification?",
+    "Does SDK resume across two Claude Max accounts preserve transcript and tool idempotency after a partial streamed turn?",
+    "What is the maintainer response to a narrowly scoped provider-agnostic credential-resolver hook?"
+  ],
+  "consensus_ready": false,
+  "dissent": "I cannot yet agree that account hopping is safe or that the exact first-class contract surface is settled. The deciding tests are direct query() credential-identity verification and a two-account resume test after a partial tool call; until both pass, v1 must select at session start and fail visibly at exhaustion rather than promise seamless mid-thread hopping.",
+  "_member": "morpheus",
+  "_model": "openai/gpt-5.6-luna-pro",
+  "_ok": true
+}

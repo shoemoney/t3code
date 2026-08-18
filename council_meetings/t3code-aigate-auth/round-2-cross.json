@@ -1,0 +1,740 @@
+{
+  "round": "2-cross",
+  "members": [
+    {
+      "position": "[THEORY] Ship a fork-first, optional generic credential-broker seam, with an aigate adapter outside the core provider and dynamic resolution at Claude query/session creation; do not implement a zero-diff wrapper because T3 must report limits and preserve event-sourced state. [VERIFIED] Use per-instance CLAUDE_CONFIG_DIR and child env injection, select the best-headroom Claude account at session start, park on typed quota failures, and hop only at a turn boundary by recreating the SDK query with its resume cursor. [THEORY] Represent native Claude, Muse, and Kimi K3 as versioned T3-side route profiles rather than aigate-discovered models; Claude is the only brokered provider in v1, while Codex, Cursor, Grok, and OpenCode remain unchanged. [THEORY] Monday's smallest step is an integration spike that proves SDK identity with account A versus conflicting Keychain account B, then adds a no-op broker interface plus an aigate selector test before any client UI work.",
+      "claims": [
+        {
+          "claim": "T3's current Claude environment path creates a per-instance environment object rather than mutating the server-global process environment, so concurrent provider instances do not inherently overwrite one another's credentials.",
+          "status": "VERIFIED",
+          "evidence": "Chair verification EXP-4: mergeProviderInstanceEnvironment() in apps/server/src/provider/ProviderInstanceEnvironment.ts:3-16 spreads into a new object; it is called by Drivers/ClaudeDriver.ts:128, and ClaudeAdapter.ts:4176 passes the resulting env to query().",
+          "test": ""
+        },
+        {
+          "claim": "The Agent SDK maintains one long-lived query per T3 thread, but T3 has a resume-cursor path that can create a new query for a later turn.",
+          "status": "VERIFIED",
+          "evidence": "Chair verification EXP-3: ClaudeAdapter.ts createQuery() at approximately :4221 stores ClaudeSessionContext instances around :4280; readClaudeResumeState, resume, and resumeSessionAt support recreating a query from a prior session.",
+          "test": ""
+        },
+        {
+          "claim": "Account hopping should be implemented only at a turn boundary in v1, not during a streamed turn.",
+          "status": "THEORY",
+          "evidence": "EXP-3 establishes the long-lived query and resume mechanism; aigate-run.sh changes accounts by launching a new process and continuing. A mid-stream credential change could duplicate or lose tool effects.",
+          "test": "Run a disposable two-account test that exhausts account A after a partial tool interaction, recreates the query with account B and the resume cursor, and verifies no duplicated tool calls, lost context, or protocol corruption."
+        },
+        {
+          "claim": "T3 already receives rate-limit telemetry that can drive limit reporting and account parking without parsing human-readable CLI output.",
+          "status": "VERIFIED",
+          "evidence": "Chair verification EXP-5: SDK rate_limit_event messages are mapped to account.rate-limits.updated orchestration events in ClaudeAdapter.ts:3507-3552.",
+          "test": ""
+        },
+        {
+          "claim": "aigate's current selector is suitable for coarse best-headroom selection but is not a lease or transaction, so per-turn selection across many hosts may assign the same account concurrently.",
+          "status": "VERIFIED",
+          "evidence": "aigate src/server.js:295-298 implements pickRanked; the supplied inspection found no lease/transaction, and /api/select returns an account plus setup_token using caller-supplied exclusions.",
+          "test": "Issue parallel /api/select requests from multiple hosts, record duplicate assignments, and measure whether parking and polling recover within the configured TTL."
+        },
+        {
+          "claim": "Muse and Kimi K3 should be modeled as T3-side route profiles with explicit environment overlays, not as ordinary Anthropic account selections.",
+          "status": "THEORY",
+          "evidence": "aigate-muse.sh requires api.meta.ai, bearer authentication, all-tier model mapping, a 1,007,997 context limit, and a tool-name workaround; Kimi likewise uses a separate Anthropic-compatible endpoint and auth family. aigate has no model endpoint.",
+          "test": "Implement native Claude, Muse, and Kimi profiles and verify model-picker entries, endpoint/auth isolation, context behavior, tier mapping, tool compatibility, and successful probes for each profile."
+        },
+        {
+          "claim": "aigate cannot provide model listing today, because /api/capabilities reports provider key counts and Claude account counts but no model identifiers.",
+          "status": "VERIFIED",
+          "evidence": "Operator and chair repository inspection: aigate/src/providers.js is a provider-key catalog; no /api/models endpoint exists; /api/capabilities contains registry counts and selectable Claude-account counts only.",
+          "test": ""
+        },
+        {
+          "claim": "The broker must be generic and optional, with a no-op implementation preserving current behavior and an aigate adapter configured by user-supplied URL and secret rather than a hardcoded LAN address.",
+          "status": "THEORY",
+          "evidence": "AGENTS.md requires optional, generic, remote-ready integrations; T3 already provides ProviderInstanceEnvironmentVariable sensitive storage through packages/contracts/src/providerInstance.ts:104-113 and ServerSecretStore in serverSettings.ts:316-376.",
+          "test": "Run the full provider and session test suites with the broker disabled and compare behavior against the pre-broker baseline; run an aigate outage test and confirm fail-closed behavior without secret leakage or silent fallback to the wrong account."
+        },
+        {
+          "claim": "Claude is the only provider with aigate account rotation in v1; Codex, Cursor, Grok, and OpenCode receive explicit no-integration decisions.",
+          "status": "VERIFIED",
+          "evidence": "The supplied aigate API is Claude-specific: /api/select returns Claude setup tokens and /api/accounts exposes Anthropic rate-limit state. The GPT rung was retired on 2026-08-04, and no non-Claude account-selection contract was found.",
+          "test": ""
+        },
+        {
+          "claim": "The fork-first posture is justified, but acceptance of a later upstream generic hook remains unknown rather than established.",
+          "status": "CONTESTED",
+          "evidence": "CONTRIBUTING.md reportedly says the project is not actively accepting contributions, while maintainers accept only small focused PRs; this supports a fork or external package but does not prove a minimal generic hook would be rejected.",
+          "test": "After the fork proves the seam, submit a narrowly scoped provider-agnostic spawn-time credential-resolver proposal with no aigate references and record maintainer disposition."
+        }
+      ],
+      "challenges": [
+        {
+          "member": "Tank",
+          "their_claim": "[THEORY] The Monday step can add useAigate and call /api/select during instantiation, with Muse and Kimi left as manually configured instances.",
+          "problem": "[VERIFIED] EXP-4 shows Claude environment is captured at adapter construction and reused for the long-lived query, so construction-time selection cannot support account hopping or reliable per-turn re-selection. [THEORY] Manual Muse/Kimi instances may work, but the route-specific context, tier, and tool settings need a first-class profile to prevent unsafe partial configuration.",
+          "test": "Trace and test a turn after an account is parked; if the active adapter does not recreate query options with a newly selected token, construction-time selection is insufficient."
+        },
+        {
+          "member": "Mouse",
+          "their_claim": "[THEORY] No T3 broker concept should be added until the Keychain experiment runs, and a sidecar can keep three dumb Claude instances working.",
+          "problem": "[VERIFIED] The chair's EXP-1 and addendum show the same Claude binary honors CLAUDE_CODE_OAUTH_TOKEN under a fresh CLAUDE_CONFIG_DIR, and EXP-4 proves per-instance env objects are concurrency-safe. [UNMEASURED] The exact Agent SDK query identity still requires confirmation, but delaying all architectural work until that result conflates one authentication-risk test with the already-established need for dynamic query recreation and limit events.",
+          "test": "Run query() through probeClaudeCapabilities with conflicting Keychain and injected credentials; use init.account identity and captured request credentials as the discriminator."
+        },
+        {
+          "member": "Seraph",
+          "their_claim": "[THEORY] Mid-thread hopping can resume under T3 because aigate-run.sh proves claude --continue preserves the conversation.",
+          "problem": "[VERIFIED] The CLI's --continue behavior is not proof of Agent SDK resume correctness after streamed tool calls; EXP-3 proves only that a resume cursor exists. Treating the paths as equivalent risks duplicated side effects.",
+          "test": "Force a controlled quota failure after a tool call, recreate the SDK query with resume and account B, and compare tool-call IDs, side effects, and transcript continuity."
+        },
+        {
+          "member": "Trinity",
+          "their_claim": "[THEORY] Phase 1 can map alternate endpoints into distinct provider instances using existing environment injection with no broker concept.",
+          "problem": "[VERIFIED] This supports route configuration but not account selection, limit reporting, parking, or account hopping. A zero-broker phase is a useful smoke test, not the complete integration plan requested by the council.",
+          "test": "Demonstrate selection, telemetry, quota parking, and turn-boundary re-selection in T3 while preserving route-specific Muse/Kimi environments."
+        },
+        {
+          "member": "brief",
+          "their_claim": "[THEORY] The integration should resemble aigate-run.sh closely enough to provide automatic retries and account hopping inside T3.",
+          "problem": "[VERIFIED] aigate-run.sh classifies CLI text and relaunches processes, whereas T3 consumes SDK events through a long-lived query. Directly transplanting the wrapper would not satisfy typed event reporting and could retry after partial tool execution.",
+          "test": "Inject synthetic 429, 529, and partial-stream failures into the SDK adapter and verify that each is classified into safe retry, park-and-hop, or user-visible failure without duplicate effects."
+        }
+      ],
+      "retractions": [
+        {
+          "was": "[CONTESTED] I previously treated credential precedence under T3's Agent SDK and isolated config as wholly unmeasured.",
+          "now": "[VERIFIED with residual uncertainty] The same spawned Claude binary honors an injected OAuth token under a fresh CLAUDE_CONFIG_DIR, and the chair's addendum says this is the practical SDK code path; only direct query() identity confirmation and future-version behavior remain unmeasured.",
+          "because": "Chair EXP-1 and its addendum supplied the missing controlled bogus-token/live-token evidence."
+        },
+        {
+          "was": "[THEORY] I previously proposed deferring account hopping until the query lifecycle was investigated.",
+          "now": "[VERIFIED architecture, THEORY safety] EXP-3 establishes one long-lived query per thread and an available resume cursor, so turn-boundary hop is now the concrete implementation target; safety after partial tool execution remains a testable theory.",
+          "because": "Chair EXP-3 supplied direct ClaudeAdapter lifecycle and resume-state findings."
+        },
+        {
+          "was": "[CONTESTED] I previously described dynamic environment resolution as potentially available through the existing seam.",
+          "now": "[VERIFIED] Environment is captured at adapter construction and reused for query options; dynamic broker resolution requires new code or adapter reconstruction.",
+          "because": "Chair EXP-4 traced makeClaudeEnvironment and queryOptions.env in ClaudeAdapter.ts."
+        }
+      ],
+      "needs_research": [
+        "Does direct @anthropic-ai/claude-agent-sdk query() expose init.account identity matching the injected aigate account under a conflicting macOS Keychain login?",
+        "Which exact T3 contract events, projectors, and web/desktop/mobile components should represent broker selecting, active, parked, exhausted, reauth-required, unavailable, and disabled states?",
+        "What typed SDK event or error preserves HTTP 429, 529, quota, and retry-after information for safe classification?",
+        "Does SDK resume across two Claude Max accounts preserve transcript and tool idempotency after a partial streamed turn?",
+        "What is the maintainer response to a narrowly scoped provider-agnostic credential-resolver hook?"
+      ],
+      "consensus_ready": false,
+      "dissent": "I cannot yet agree that account hopping is safe or that the exact first-class contract surface is settled. The deciding tests are direct query() credential-identity verification and a two-account resume test after a partial tool call; until both pass, v1 must select at session start and fail visibly at exhaustion rather than promise seamless mid-thread hopping.",
+      "_member": "morpheus",
+      "_model": "openai/gpt-5.6-luna-pro",
+      "_ok": true
+    },
+    {
+      "position": "We should implement an upstreamable, generic CredentialBroker interface in apps/server/src/provider/ with an optional aigate adapter. Account selection occurs at session start and turn boundaries via GET /api/select, using T3's turn-based resume cursor (resumeSessionAt) to execute account hops without lost state, while SDK rate_limit_events trigger POST /api/events/limit telemetry. Non-Anthropic models (Muse, Kimi) belong as static route profiles in T3's ClaudeProvider catalog that automatically apply required env flags (e.g., CLAUDE_CODE_MAX_CONTEXT_TOKENS=1007997), since aigate has no model listing API. V1 focuses exclusively on Claude; Codex, Cursor, Grok, and OpenCode remain no-op given aigate's retired non-Claude pools.",
+      "claims": [
+        {
+          "claim": "Per-instance CLAUDE_CONFIG_DIR isolation prevents macOS Keychain credentials from overriding injected CLAUDE_CODE_OAUTH_TOKEN environment variables.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-1: Executed claude CLI with isolated CLAUDE_CONFIG_DIR and live setup_token, confirming authentic response without reading or mutating system Keychain.",
+          "test": ""
+        },
+        {
+          "claim": "T3's ClaudeAdapter natively surfaces typed rate-limit events from the SDK that can directly drive aigate parking and account hopping.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-5: Layers/ClaudeAdapter.ts:3507-3552 maps SDK rate_limit_event directly to account.rate-limits.updated orchestration events.",
+          "test": ""
+        },
+        {
+          "claim": "Mid-thread account hopping can be safely performed between turns using T3's existing thread resume cursor.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-3: Drivers/ClaudeAdapter.ts supports readClaudeResumeState and resumeSessionAt, allowing a new query process to resume a thread ID under a new environment context.",
+          "test": ""
+        },
+        {
+          "claim": "Muse and Kimi K3 must be integrated as static Claude Provider route profiles in T3 Code rather than queried from aigate.",
+          "status": "THEORY",
+          "evidence": "aigate src/server.js has no /api/models endpoint, and route parameters (CLAUDE_CODE_MAX_CONTEXT_TOKENS=1007997, tier mappings, tool name limits) are static operational invariants.",
+          "test": "Register a Muse route profile in ClaudeProvider.ts and verify end-to-end turn completion and context window estimation."
+        },
+        {
+          "claim": "Codex, Cursor, Grok, and OpenCode should be explicitly set to no-op for broker rotation in v1.",
+          "status": "VERIFIED",
+          "evidence": "aigate-gpt.sh retired on 2026-08-04 and aigate src/server.js contains no selection endpoints or active token pools for non-Claude providers.",
+          "test": ""
+        }
+      ],
+      "challenges": [
+        {
+          "member": "TANK",
+          "their_claim": "Model listing for non-Anthropic models like Muse/Kimi is out of scope and users should manually construct custom env instances.",
+          "problem": "Manual environment construction fails to set CLAUDE_CODE_MAX_CONTEXT_TOKENS=1007997 or tier model overrides, causing Haiku 404s and 5x premature context truncation.",
+          "test": "Issue a multi-turn request to Meta Muse without tier env mappings; observe Haiku background call 404."
+        }
+      ],
+      "retractions": [
+        {
+          "was": "Assumed macOS Keychain clearing or shadow login deletion was necessary before injecting aigate credentials.",
+          "now": "Keychain clearing is completely unnecessary under T3 Code's architecture.",
+          "because": "Chair EXP-1 demonstrated that per-instance CLAUDE_CONFIG_DIR isolation prevents Keychain override when CLAUDE_CODE_OAUTH_TOKEN is supplied."
+        }
+      ],
+      "needs_research": [
+        "Does Anthropic's backend enforce account-ownership checks on thread resume state when a thread created by setup_token A is resumed by setup_token B?"
+      ],
+      "consensus_ready": true,
+      "dissent": "",
+      "_member": "trinity",
+      "_model": "google/gemini-3.6-flash",
+      "_ok": true
+    },
+    {
+      "position": "EXP-1 killed the Keychain blocker: with per-instance CLAUDE_CONFIG_DIR, injected CLAUDE_CODE_OAUTH_TOKEN wins and you do not touch the developer's login. Stop designing CredentialBroker cathedrals. v1 is three dumb Claude instances (or one instance whose env is re-resolved only when you rebuild the adapter) fed by an optional external select call \u2014 multi-instance is already the account primitive. Muse/Kimi stay T3-side static route/env profiles; aigate has no models API. Codex/Cursor/Grok/OpenCode: no. Mid-thread hop is kill-query+resume with new env (EXP-3), not magic, and env is captured at adapter construction (EXP-4) so anyone promising per-turn select without rebuild is lying.",
+      "claims": [
+        {
+          "claim": "Under isolated CLAUDE_CONFIG_DIR, CLAUDE_CODE_OAUTH_TOKEN is honored and Keychain does not rescue a bogus token; T3 already sets per-instance CLAUDE_CONFIG_DIR so aigate-style Keychain deletion is unnecessary.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-1 (2026-08-17): CLAUDE_CONFIG_DIR=<fresh> + BOGUS token \u2192 401 (Keychain did not rescue); live setup_token \u2192 OK. Drivers/ClaudeHome.ts:27-33 sets per-instance CLAUDE_CONFIG_DIR. Caveat n=1 box/binary; SDK path same binary via pathToClaudeCodeExecutable.",
+          "test": ""
+        },
+        {
+          "claim": "mergeProviderInstanceEnvironment spreads into a new object and does not mutate process.env; two instances with different tokens do not clobber each other.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-4: ProviderInstanceEnvironment.ts:11 spread; called ClaudeDriver.ts:128.",
+          "test": ""
+        },
+        {
+          "claim": "queryOptions.env is captured once at adapter construction (makeClaudeEnvironment ~ClaudeAdapter.ts:1663, reused :4176), not re-read per turn/spawn. Dynamic per-turn account select requires new code or adapter/instance rebuild.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-4.",
+          "test": ""
+        },
+        {
+          "claim": "One long-lived SDK query() per thread; mid-thread account hop = kill query, new query with resume cursor + new env (turn boundary only), same shape as claude --continue.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-3: createQuery at ClaudeAdapter.ts:4221, sessions Map:4280, resume via readClaudeResumeState/resume/resumeSessionAt.",
+          "test": ""
+        },
+        {
+          "claim": "SDK already emits rate_limit_event \u2192 account.rate-limits.updated; T3 can drive park/hop and optionally POST aigate /api/events/usage without scraping CLI stderr.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-5: ClaudeAdapter.ts:3507-3552.",
+          "test": ""
+        },
+        {
+          "claim": "Pseudo-model slugs (muse/kimi) pass resolveClaudeApiModelId untouched; catalog gates UI picker not execution. Muse/Kimi are env+base-URL route profiles, not aigate concepts.",
+          "status": "VERIFIED",
+          "evidence": "EXP-6 ClaudeProvider.ts:464-471 pass-through; aigate-muse.sh env pattern; aigate has no /api/models (operator/chair).",
+          "test": ""
+        },
+        {
+          "claim": "aigate /api/select has no lease; concurrent hosts can get the same account; healing is TTL park + 10-min poll.",
+          "status": "VERIFIED",
+          "evidence": "EXP-7 pickRanked src/server.js:295-298.",
+          "test": ""
+        },
+        {
+          "claim": "Codex/ChatGPT account rotation is out of scope for v1 \u2014 no live aigate backend.",
+          "status": "VERIFIED",
+          "evidence": "aigate-gpt.sh retired 2026-08-04, 402 out of credits; no Codex account pool in aigate.",
+          "test": ""
+        },
+        {
+          "claim": "v1 should stay zero-or-near-zero core abstraction: optional select-on-instance-start (or external sidecar writing sensitive instance env), reuse multi-instance, no first-class broker type upstream.",
+          "status": "THEORY",
+          "evidence": "Native ProviderInstanceId multi-instance; EXP-1 removes Keychain fight; EXP-4 means select-at-construction matches existing seams without a broker interface; CONTRIBUTING.md not accepting big features.",
+          "test": "Ship optional aigate URL/token in userdata secrets + one select at Claude instance/adapter build injecting CLAUDE_CODE_OAUTH_TOKEN+AIGATE_ACCOUNT; disable path byte-identical to today; no Keychain writes; probe init.account matches selected account."
+        },
+        {
+          "claim": "Automatic mid-session hop is phase 2: on rate_limit_event/exhausted, park via POST /api/events/limit, re-select exclude=, rebuild adapter env, resume query \u2014 not session-start-only forever, but not Monday.",
+          "status": "THEORY",
+          "evidence": "EXP-3+5 give the mechanism; warden already parks and --continues; T3 lacks rebuild-on-limit glue today.",
+          "test": "Two disposable accounts: exhaust A mid-thread, assert park+reselect+resume on B preserves thread context without duplicate tool side effects."
+        },
+        {
+          "claim": "Upstream will not land an aigate-named or large broker feature; keep aigate adapter fork/external.",
+          "status": "THEORY",
+          "evidence": "CONTRIBUTING.md not actively accepting contributions; brief big features closed.",
+          "test": "If ever upstreaming: PR only generic optional env-resolve hook, zero aigate strings; closed-as-policy \u21d2 fork stays."
+        }
+      ],
+      "challenges": [
+        {
+          "member": "MORPHEUS",
+          "their_claim": "Keychain vs env under SDK+CLAUDE_CONFIG_DIR is CONTESTED/unmeasured.",
+          "problem": "Chair EXP-1 settled it: isolated config dir \u2192 env token wins; no Keychain clear needed. Holding CONTESTED past the experiment is stale.",
+          "test": "Re-run EXP-1 bogus-token probe on SDK query() once if you distrust CLI parity; expect 401 not Keychain rescue."
+        },
+        {
+          "member": "SERAPH",
+          "their_claim": "mergeProviderInstanceEnvironment may overlay onto process.env and race concurrent instances.",
+          "problem": "EXP-4 falsifies the global-mutation reading: it spreads into a new object. Fitness issue was real as a question; answer is no race on process.env.",
+          "test": "Read ProviderInstanceEnvironment.ts:11; concurrent unit test already implied by spread semantics."
+        },
+        {
+          "member": "SERAPH",
+          "their_claim": "E0/E1 must block all integration code; Monday is read 14 lines + E1 only.",
+          "problem": "E1 is done (EXP-1). E0 is done (EXP-4). Blocking on already-run experiments is procrastination cosplay. Monday is select-at-build + inject.",
+          "test": "If SDK-specific reprobe desired: probeClaudeCapabilities init.account under isolated dir \u2014 half hour not a phase gate."
+        },
+        {
+          "member": "TANK",
+          "their_claim": "useAigate on instance calls /api/select on instantiation and that is enough; model listing out of scope; park/reselect maps to switching instances between turns.",
+          "problem": "Select-on-instantiation matches EXP-4 (good). Claiming per-turn headroom probe without adapter rebuild ignores env capture. Switching provider instances mid-thread is not the same as resume on same thread with new env \u2014 needs EXP-3 resume path proven in T3 UI/orchestration.",
+          "test": "After limit event, continue same ThreadId via resume+new instance env; assert continuity vs forcing user to pick another instance manually."
+        },
+        {
+          "member": "TRINITY",
+          "their_claim": "Phase 2 CredentialBroker interface in apps/server/src/provider/ dynamically invoking select on session init and retry.",
+          "problem": "Named broker type in core is the cathedral. Optional function/config that returns env overlay at adapter build is enough; interface theater fails upstream and AGENTS.md generic-optional without new ontology.",
+          "test": "Implement with zero new public types beyond config fields; if disabled, no new symbols required at call sites."
+        },
+        {
+          "member": "brief",
+          "their_claim": "Design first-class brokering + model listing via aigate as central questions.",
+          "problem": "aigate is a vault/selector not a model directory (VERIFIED). T3 multi-instance + env seam + resume already shape the answer. The polite furniture is 'we need a broker concept'; the impolite question is 'what line of code is missing after EXP-1/3/4/5?' \u2014 adapter rebuild on limit + optional select call.",
+          "test": "Monday spike: wire select\u2192sensitive env on one Claude instance; prove init.account; document Muse as second instance with static env; stop."
+        }
+      ],
+      "retractions": [
+        {
+          "was": "Keychain/stored login outranking CLAUDE_CODE_OAUTH_TOKEN under Agent SDK + per-instance CLAUDE_CONFIG_DIR is UNMEASURED and blocks every integration sketch.",
+          "now": "VERIFIED safe under isolated CLAUDE_CONFIG_DIR (EXP-1): env wins; do not delete Keychain; no fight with ai CLI on same Mac.",
+          "because": "Chair EXP-1 bogus-token and live-token probes, 2026-08-17; ClaudeHome per-instance isolation."
+        },
+        {
+          "was": "Use only an external sidecar refreshing env with zero T3 code and treat any in-process select as cathedral.",
+          "now": "A tiny optional select-at-adapter-build inside T3 (or sidecar + instance rebuild trigger) is justified; still reject a generic CredentialBroker ontology and upstream theater. Env is static at construction (EXP-4) so pure external file refresh without rebuild does nothing to a live adapter.",
+          "because": "EXP-4 (env once at makeClaudeEnvironment) and EXP-3 (resume hop needs intentional re-create) force one honest hook point; chair research."
+        },
+        {
+          "was": "Defer all hop discussion as unmeasured process vs session confusion.",
+          "now": "Hop mechanism is known: kill query + resume + new env at turn boundary; rate_limit_event already in adapter. Still phase-2 glue, not Monday.",
+          "because": "Chair EXP-3 and EXP-5."
+        }
+      ],
+      "needs_research": [
+        "SDK query() identity probe (init.account.email/tokenSource) under isolated CLAUDE_CONFIG_DIR with conflicting Keychain \u2014 CLI EXP-1 parity not literally SDK n=1",
+        "Whether T3 orchestration can swap ModelSelection/instance env and resume the same ThreadId without UI/session breakage (file-level path through ProviderService + clients)",
+        "Exact client files for provider status reverse states (web/desktop/mobile) for parked/reauth/broker-unavailable",
+        "Duplicate /api/select assignment rate under fleet N hosts and whether 15m TTL park is enough for T3 turn rates"
+      ],
+      "consensus_ready": false,
+      "dissent": "I will not agree to a first-class CredentialBroker type, aigate /api/models, Keychain clearing, or Codex-in-v1. Consensus-ready once the plan is: optional select\u2192inject at adapter build; multi-instance + static Muse/Kimi route envs; hop = phase2 resume+rebuild on rate_limit_event; fork/external aigate bits; Monday = wire select+secret env+probe identity on one instance. Test that flips me on broker ontology: show multi-instance cannot express headroom-ranked pick + park without a new type.",
+      "_member": "mouse",
+      "_model": "x-ai/grok-4.5",
+      "_ok": true
+    },
+    {
+      "position": "T3 Code should integrate aigate as a credential broker in a fork-first approach, using the existing per-instance env injection seam (mergeProviderInstanceEnvironment) with per-instance CLAUDE_CONFIG_DIR isolation, which chair EXP-1 VERIFIED avoids Keychain shadowing. The broker resolves at session start (not per-turn) by calling aigate /api/select and injecting the token into the instance's environment. Model listing for Muse/Kimi is a T3-side static route profile, not an aigate endpoint. Codex/Cursor/Grok/OpenCode are out of scope for v1. The Monday-shippable step: add an optional 'credentialBroker' config to Claude provider instances that specifies a broker URL/token, and on instance creation, call the broker and inject the returned env vars. This is a small, reversible fork feature that can be upstreamed later if the maintainers accept a generic hook.",
+      "claims": [
+        {
+          "claim": "CLAUDE_CODE_OAUTH_TOKEN env beats stored macOS Keychain login when CLAUDE_CONFIG_DIR is isolated per-instance, verified by EXP-1 on the same binary the SDK spawns.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-1: fresh CLAUDE_CONFIG_DIR + CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-BOGUS \u2192 401 'invalid token' (env used, not Keychain). Same binary as SDK path. n=1 box, headless -p.",
+          "test": ""
+        },
+        {
+          "claim": "mergeProviderInstanceEnvironment does NOT mutate process.env; it creates a new object per instance, so concurrent instances with different tokens do not race.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-4: 'mergeProviderInstanceEnvironment itself does NOT mutate process.env \u2014 it spreads into a new object (ProviderInstanceEnvironment.ts:11)'. Two instances with different tokens do not clobber each other.",
+          "test": ""
+        },
+        {
+          "claim": "aigate has no model-listing endpoint and no model-aware selection logic. It stores provider keys but never enumerates or filters by model.",
+          "status": "VERIFIED",
+          "evidence": "Chair's repo inspection: aigate/src/server.js:295-298 pickRanked selects by headroom only; src/providers.js is key catalog, no models. /api/capabilities returns key/account counts, no models.",
+          "test": ""
+        },
+        {
+          "claim": "T3's SDK query lifecycle is one long-lived session per thread; account hop mid-thread requires killing the query and recreating with resume cursor + new env, which is turn-boundary only.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-3: sessions map ThreadId to ClaudeSessionContext; resume mechanism exists (resumeSessionAt); new query can resume a prior session ID. Same shape as claude --continue.",
+          "test": ""
+        },
+        {
+          "claim": "Rate-limit telemetry already flows from SDK to T3 adapter events; the adapter maps rate_limit_event to account.rate-limits.updated orchestration events.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-5: ClaudeAdapter.ts:3507-3552 maps SDK rate_limit_event to orchestration events. T3 natively knows per-account headroom during a session.",
+          "test": ""
+        },
+        {
+          "claim": "The model catalog does not gate execution; pseudo-model names (e.g. muse-spark-1.2-contributor) reach the SDK untouched.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-6: resolveClaudeApiModelId is a pass-through (appends [1m] for context option). Catalog gates client picker/UI, not execution.",
+          "test": ""
+        },
+        {
+          "claim": "aigate /api/select has no lease/transaction; concurrent callers from multiple hosts can receive the same account.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-7: pickRanked is a plain ranked SELECT (src/server.js:295-298); no transaction or lease. Healing is TTL parking + 10-min usage polling.",
+          "test": ""
+        },
+        {
+          "claim": "The env injection seam is captured at adapter construction, not per query spawn. Dynamic per-spawn env resolution requires new code.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-4: makeClaudeEnvironment runs once in adapter layer (:1663) and queryOptions.env reuses it (:4176). mergeProviderInstanceEnvironment does not re-read on each spawn.",
+          "test": ""
+        },
+        {
+          "claim": "Muse/Kimi require specific env overrides incompatible with aigate's OAuth token injection: CLAUDE_CODE_OAUTH_TOKEN must be unset, ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN set, and tier env mappings applied.",
+          "status": "VERIFIED",
+          "evidence": "Chair's aigate-muse.sh analysis: ANTHROPIC_BASE_URL=https://api.meta.ai, ANTHROPIC_AUTH_TOKEN=<LLM|key>, CLAUDE_CODE_OAUTH_TOKEN unset, all model-tier variables mapped, CLAUDE_CODE_MAX_CONTEXT_TOKENS=1007997, dedicated settings file for 64-char tool-name limit.",
+          "test": ""
+        },
+        {
+          "claim": "Codex/Cursor/Grok/OpenCode account rotation is out of scope for v1; aigate holds no multi-account selectors for them and the GPT rung is retired.",
+          "status": "VERIFIED",
+          "evidence": "Chair's aigate API inventory: no select/accounts/limit endpoints for non-Claude providers. aigate-gpt.sh retired 2026-08-04 (402 out-of-credits per brief).",
+          "test": ""
+        },
+        {
+          "claim": "The smallest shippable step is adding an optional 'credentialBroker' config to Claude provider instances, calling aigate /api/select on instance creation, and injecting the returned token via the existing env seam.",
+          "status": "THEORY",
+          "evidence": "Existing env injection seam (ProviderInstanceEnvironment.ts, ClaudeDriver.ts:128) and secret store (ServerSecretStore) can inject arbitrary env vars. Multi-instance is native. No code changes needed to the SDK call site.",
+          "test": "Implement the broker config and run a test T3 session with aigate enabled; verify that the instance uses the selected account and that disabling the broker restores current behavior byte-for-byte."
+        },
+        {
+          "claim": "Upstream (theo/julius) will not accept a large feature PR; the integration should be fork-first with a generic hook that could later be upstreamed as a small focused PR.",
+          "status": "THEORY",
+          "evidence": "CONTRIBUTING.md: 'not actively accepting contributions'. Brief: maintainers accept only small focused PRs. No direct measurement of maintainer response to a generic broker hook PR.",
+          "test": "After the fork proves the design, open one focused PR adding only the spawn-time external env-resolution hook (no aigate references) and observe maintainer disposition."
+        }
+      ],
+      "challenges": [
+        {
+          "member": "MORPHEUS",
+          "their_claim": "THEORY: A first release should call aigate at process/session start and inject the selected Claude OAuth token, rather than attempting per-turn account switching.",
+          "problem": "Agreed on session-start injection, but the claim assumes the env seam is refreshed per spawn. EXP-4 shows makeClaudeEnvironment runs once per adapter construction, not per query. So session-start injection requires a new per-spawn resolution point or a re-creation of the adapter/instance. The claim does not account for this static capture.",
+          "test": "Instrument ClaudeDriver to log the env hash on each sendTurn across a 3-turn thread. If the hash is identical, the env is not refreshed per spawn, and per-turn account switching without re-creation is not possible."
+        },
+        {
+          "member": "TRINITY",
+          "their_claim": "Phase 2 introduces an upstreamable lightweight CredentialBroker interface that dynamically invokes aigate's /api/select and /api/events/limit endpoints on session init and retry.",
+          "problem": "Upstreamability is contested: CONTRIBUTING.md states 'not actively accepting contributions'. The claim that a CredentialBroker interface would be accepted as a small PR is unsupported by any evidence of maintainer openness. Until that is tested, the upstreamable claim is a theory at best.",
+          "test": "Submit a minimal PR adding only the CredentialBroker interface (no aigate-specific code) and observe maintainer response. If closed, the fork-first path is mandatory."
+        },
+        {
+          "member": "MOUSE",
+          "their_claim": "THEORY: Zero broker concept in T3 core \u2014 use three dumb Claude instances whose env secrets an external aigate side-car refreshes.",
+          "problem": "This design requires the side-car to modify T3's secret store (ServerSecretStore) out-of-band, which is a race condition with T3's own settings management. T3's secret store is not designed for external mutation; it's write-once from the UI. The side-car would need to either restart T3 services or use an undocumented API, breaking the 'remote-ready' requirement. Also, model listing for Muse/Kimi would be entirely manual per instance, offering no user experience improvement over current manual config.",
+          "test": "Implement the side-car approach: have an external process write new tokens into ~/.t3/userdata/secrets/*.bin and then trigger a provider instance re-initialization. Measure whether the instance picks up the new token without restarting the server or losing session state. If it cannot, the side-car approach is insufficient for dynamic rotation."
+        },
+        {
+          "member": "SERAPH",
+          "their_claim": "If mergeProviderInstanceEnvironment() overlays onto the server-global process.env, then two broker-backed instances on different accounts race.",
+          "problem": "EXP-4 VERIFIED that mergeProviderInstanceEnvironment does NOT mutate process.env; it creates a new object per instance. The claim was based on ambiguous wording in the brief, but the actual code is concurrency-safe.",
+          "test": "Read ProviderInstanceEnvironment.ts:3-16 (14 lines) \u2014 the code spreads into a new object, not process.env. No race."
+        },
+        {
+          "member": "brief",
+          "their_claim": "The integration must hit all surfaces (web/desktop/mobile) and provide model listing for non-Anthropic models.",
+          "problem": "Model listing is conflated with credential brokering. aigate has no model endpoint; Muse/Kimi require static route profiles. Requiring model listing from aigate invents scope. The integration should separate credential brokering (aigate's job) from model discovery (T3's static catalog or future provider capability).",
+          "test": "Implement T3-side static route profiles for Muse/Kimi and verify they work without any aigate model endpoint. Compare UX: user creates a Claude instance with predefined env overrides vs. querying a server for available models. The simpler approach is sufficient for v1."
+        }
+      ],
+      "retractions": [
+        {
+          "was": "TANK claimed: 'UNMEASURED: aigate-run.sh's keychain-delete trick... may not apply under Agent SDK with per-instance CLAUDE_CONFIG_DIR \u2014 but it is UNMEASURED.'",
+          "now": "VERIFIED: CLAUDE_CODE_OAUTH_TOKEN env beats Keychain when CLAUDE_CONFIG_DIR is isolated per-instance (EXP-1). No Keychain clearing needed. The shadowing hazard is resolved for the SDK path with per-instance isolation.",
+          "because": "Chair EXP-1 provided conclusive evidence on the same binary the SDK spawns. The Keychain outranking is specific to the default config dir, not T3's isolated CLAUDE_CONFIG_DIR."
+        },
+        {
+          "was": "TANK claimed: 'mergeProviderInstanceEnvironment overlays onto process.env' (implying possible concurrency race).",
+          "now": "VERIFIED: mergeProviderInstanceEnvironment does NOT mutate process.env; it creates a new object per instance (EXP-4). No race.",
+          "because": "Chair EXP-4 explicitly read the code and confirmed it spreads into a new object. The brief's wording was ambiguous; the actual code is safe."
+        }
+      ],
+      "needs_research": [
+        "Does the Agent SDK's query() actually reuse the same child process across turns, or does it spawn a new process per turn? This affects whether per-turn env injection is cheap or requires a new adapter/instance.",
+        "What is the exact error event schema the SDK emits on 429/529 rate limits? Can the adapter reliably extract retry-after and unified-reset epochs without regex parsing?",
+        "Does aigate's /api/select have any rate limit or do we need to add caching on the T3 side to avoid hammering it on every turn?",
+        "How does T3's desktop app store and manage provider instance configs? Can we add a 'credentialBroker' field to the UI without breaking mobile/CLI?",
+        "What is the precise behavior of the SDK when CLAUDE_CODE_OAUTH_TOKEN is set but the Keychain also has a token for the same config dir? Does the SDK prefer the env var always, or does it fall back to Keychain when env var is missing? EXP-1 only tested with env var present."
+      ],
+      "consensus_ready": false,
+      "dissent": "I cannot agree to a design that either (a) embeds aigate-specific code in T3 core or (b) requires a new aigate models endpoint. The minimum viable integration is a generic spawn-time env resolution hook in the Claude provider that can be backed by aigate or any other external selector. This hook should be optional and off by default. I also dissent from the assumption that mid-session account hopping is safe without testing the SDK's resume mechanism with a changed env. The 'session-boundary only' approach is safer and should be the default. Finally, I disagree that model listing is a v1 requirement; Muse/Kimi can be statically configured as provider instances with custom env, which is already possible today.",
+      "_member": "tank",
+      "_model": "deepseek/deepseek-v4-flash",
+      "_ok": true
+    },
+    {
+      "position": "Both zero-code gates I demanded last round have now run and passed: EXP-4 proves the env seam is race-free but static per adapter construction, and EXP-1 proves an injected CLAUDE_CODE_OAUTH_TOKEN wins under an isolated CLAUDE_CONFIG_DIR (bogus token 401s \u2014 no Keychain rescue). The design is therefore: a fork-first, opt-in broker resolved once per session at query construction (the verified attachment point, since one query() lives per thread per EXP-3), with aigate as an external adapter behind a no-op default, and Muse/Kimi as static route-profile pseudo-models whose pass-through EXP-6 mechanically verifies. Account hopping collapses to one precisely-defined mechanism \u2014 park via /api/events/limit, kill the query, recreate with the existing resume cursor and fresh env \u2014 and it ships GATED, because cross-account resume through the SDK is the single remaining load-bearing unknown (experiment E2 below). The warden's Keychain deletion is dead: unnecessary under per-instance config isolation, and it must not be ported into an open-source product. v1 is Claude-only; Codex/Cursor/Grok/OpenCode get explicit 'unsupported' decisions with the verified reason (no aigate pools, gpt rung retired 2026-08-04) on record. Monday: three zero-diff experiments \u2014 SDK-path token confirmation via the existing probeClaudeCapabilities, E2 cross-account resume, E3 rate-limit payload capture \u2014 then the first contract diff.",
+      "claims": [
+        {
+          "claim": "My round-1 CONTESTED claim is now CONFIRMED: per-instance env is captured once at adapter construction (makeClaudeEnvironment, ClaudeAdapter.ts:1663; reused at queryOptions.env :4176), so dynamic per-spawn resolution requires new code \u2014 the broker hook belongs at session/query construction, not in settings materialization and not per turn.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-4 (verification pass #2): 'The fifth seat's CONTESTED claim is CONFIRMED' \u2014 I am the fifth seat. ClaudeAdapter.ts:1663, :4176.",
+          "test": ""
+        },
+        {
+          "claim": "mergeProviderInstanceEnvironment does NOT mutate process.env \u2014 it spreads into a fresh object (ProviderInstanceEnvironment.ts:11) \u2014 so two broker-backed instances on different Claude accounts running concurrently cannot clobber each other. The concurrency hazard I raised against the brief last round does not exist.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-4, reading ProviderInstanceEnvironment.ts:11 directly.",
+          "test": ""
+        },
+        {
+          "claim": "Under an isolated CLAUDE_CONFIG_DIR, an env-injected token is honored and a stored login does not override or rescue it: bogus token \u2192 401 'OAuth access token is invalid'; live aigate setup_token \u2192 success. Residual caveat I am required to state: the harness was the CLI with -p, not the SDK query() literal path; the chair's same-binary argument (pathToClaudeCodeExecutable \u2192 same cli, same env forwarding) is strong but the SDK-specific probe remains undone first-hand.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-1 (2026-08-17, n=1 box, ~/.local/bin/claude, headless -p) + EXP-1 addendum; T3 sets per-instance CLAUDE_CONFIG_DIR at Drivers/ClaudeHome.ts:27-33.",
+          "test": ""
+        },
+        {
+          "claim": "One long-lived SDK query() per thread (createQuery at ClaudeAdapter.ts:4221, sessions Map at :4280), and a resume-cursor mechanism exists (resume: <uuid>, resumeSessionAt). Account hop mid-thread is therefore exactly: kill query \u2192 recreate with resume cursor + new env, at a turn boundary. It is NOT a per-turn spawn swap.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-3, repo citations above.",
+          "test": ""
+        },
+        {
+          "claim": "Cross-account resume through the SDK \u2014 session uuid minted under account A, resumed via query() with account B's token and a fresh CLAUDE_CONFIG_DIR \u2014 is unproven. The warden proves claude --continue cross-account at the interactive CLI level (operational evidence only); the SDK resume path under a swapped env is a different code path and nobody has run it.",
+          "status": "UNMEASURED",
+          "evidence": "EXP-3 establishes the mechanism exists in-adapter; nothing in the chair's passes exercises it across accounts. This is now the single load-bearing unknown for the brief's requirement (a) 'hopping accounts when one runs dry'.",
+          "test": "E2 (zero T3 diffs, scratch script on the SDK directly): query() under aigate token A on a throwaway thread; capture session uuid; interrupt; recreate query() with resume: uuid, env carrying token B from /api/select?exclude=A, fresh CLAUDE_CONFIG_DIR. Assert: no auth/session-identity error, reply demonstrates continuity, and probeClaudeCapabilities-style init.account.email reads B. Pass \u2192 hop ungates. Fail \u2192 v1 is session-start selection only and the brief's 'hop' requirement is declared unmet-with-evidence."
+        },
+        {
+          "claim": "Typed rate-limit telemetry already flows in the adapter: SDK rate_limit_event is mapped to account.rate-limits.updated orchestration events (ClaudeAdapter.ts:3507-3552). The warden's stderr-regex classifier does NOT need porting for detection.",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-5.",
+          "test": ""
+        },
+        {
+          "claim": "What remains unmeasured on telemetry (narrowed from my round-1 claim): whether the rate_limit_event payload carries classifiable fields (5h vs 7d, reset epochs, retry-after) matching aigate's /api/events/usage and parking model, and whether a hard-maxed account surfaces a typed terminal error from query() or just hangs/retries.",
+          "status": "UNMEASURED",
+          "evidence": "EXP-5 verifies the event mapping exists, not its field fidelity; no cited source shows terminal-error typing on exhaustion.",
+          "test": "E3: park all but one near-cap account via /api/events/limit, drive a T3 thread until exhaustion, capture every emitted account.rate-limits.updated payload and the terminal error shape. If reset epochs are absent, the server polls aigate /api/accounts (which stores anthropic-ratelimit-unified-{5h,7d}-reset epochs) instead of trusting the event payload \u2014 decision recorded, not assumed."
+        },
+        {
+          "claim": "Pseudo-model slugs reach the SDK untouched: resolveClaudeApiModelId (ClaudeProvider.ts:464-471) is a pass-through; the static catalog gates only the client picker. Option (a) \u2014 Muse/Kimi as T3-side static route profiles with env bundles \u2014 is therefore mechanically verified feasible, and the brief's three-way model-listing question is settled: (a) now, (b) deferred to a future aigate PR, (c) was never real (verified: /api/capabilities exposes counts, no model identifiers).",
+          "status": "VERIFIED",
+          "evidence": "Chair EXP-6; aigate server internals (no models endpoint; pickRanked never filters by model, src/server.js:295-298).",
+          "test": ""
+        },
+        {
+          "claim": "The Muse route profile has one T3-specific viability question nobody has checked: Meta's gateway enforces a 64-char tool-name limit (aigate-muse.sh disabled a plugin over it), and T3's adapter emits its own tool/MCP names to the claude binary whose lengths are unexamined.",
+          "status": "UNMEASURED",
+          "evidence": "Brief's aigate-muse.sh notes (dedicated --settings file for the 73-char plugin); no one has enumerated T3's emitted tool names.",
+          "test": "Capture one T3 session-init payload (or enumerate registered MCP tool names server-side) and check every name against 64 chars. If any exceed, the muse route profile needs a T3-side settings overlay equivalent to aigate-muse.sh's workaround \u2014 sized before the profile ships."
+        },
+        {
+          "claim": "No Keychain or ~/.claude/.credentials.json deletion is required anywhere in this design; per-instance CLAUDE_CONFIG_DIR isolation makes the warden's clear_shadow_login obsolete for T3, and hazard #5 (T3 desktop fighting the ai CLI on one Mac) dissolves rather than needing arbitration.",
+          "status": "VERIFIED",
+          "evidence": "EXP-1 (env wins under isolation, no keychain interaction observed) + ClaudeHome.ts:27-33 (isolation already shipped) + EXP-4 (no process.env mutation). Design consequence, stated as verified-grounded: the destructive path is dropped, not gated.",
+          "test": ""
+        },
+        {
+          "claim": "/api/select has no lease or transaction (pickRanked is a plain ranked SELECT), so concurrent cross-host callers can be double-assigned the same account; at session-start-only selection cadence with TTL parking and 10-min poll healing this is benign for v1 \u2014 but 'benign' is a judgment, not a measurement.",
+          "status": "THEORY",
+          "evidence": "VERIFIED half: no lease (chair EXP-7, src/server.js:295-298). THEORY half: that collision rate at T3's session-start cadence stays low enough to ignore in v1.",
+          "test": "Fork telemetry: log account at session start per host for two weeks; count duplicate concurrent assignments of one account across hosts. If collisions correlate with premature parking, thread a locally-parked exclude= set into /api/select calls \u2014 client-side fix, no aigate change."
+        },
+        {
+          "claim": "v1 provider decisions: Claude = opt-in broker + static route profiles; Codex = unsupported (auth lives in ~/.codex/auth.json, nothing vaulted in aigate, gpt rung retired 2026-08-04 with 402s); Cursor, Grok, OpenCode = unsupported (no aigate account pools or selection posture for them). Each 'unsupported' ships as an explicit documented decision, not silence.",
+          "status": "VERIFIED",
+          "evidence": "Chair scope fact (retirement date, 402 behavior, ~/.codex/auth.json); aigate API shape (setup_token sk-ant-oat\u2026, anthropic-ratelimit-* fields are Anthropic-specific).",
+          "test": ""
+        },
+        {
+          "claim": "Upstream posture is unchanged: fork-first, generic external-env-resolver hook shaped so one small PR (no aigate mention) remains possible; whether Theo/Julius take even that is inference, not evidence.",
+          "status": "CONTESTED",
+          "evidence": "VERIFIED portion: CONTRIBUTING.md 'not actively accepting contributions' + small-PRs-only posture per the brief. Unproven portion: acceptance of a minimal hook PR.",
+          "test": "After the fork proves the design and E2/E3 land, open exactly one focused PR adding the session-start external env-resolution hook. Observe disposition. Cost: one PR."
+        }
+      ],
+      "challenges": [
+        {
+          "member": "mouse",
+          "their_claim": "Zero-diff v1: three dumb Claude instances whose env secrets an external aigate sidecar refreshes \u2014 no broker code in T3 at all.",
+          "problem": "EXP-4 cuts both ways and Mouse has not absorbed it: env is captured ONCE at adapter construction, so a sidecar that rewrites the secret materialization does not propagate \u2014 new sessions keep the stale token unless an instance-env update triggers an adapter rebuild, which nobody has established. As written the sidecar plan either silently serves dead accounts or requires server restarts as its rotation cadence, which fails the moment shoemoney-weekly-max happens mid-day. What survives of the plan, stated precisely: zero-diff v0 = one instance per aigate account with static sensitive tokens, user picks the instance per thread \u2014 that is manual selection, not brokering, and it cannot hop at all. Also, Mouse's headline blocker ('keychain hazard UNMEASURED, everything else is fanfic') is stale: EXP-1 ran it.",
+          "test": "Change a sensitive env var on a live provider instance, start a new thread, read init.account.email. If it still shows the old account, the sidecar needs an instance-reload trigger (new code or manual UX) and the 'zero-diff' claim is falsified as stated."
+        },
+        {
+          "member": "tank",
+          "their_claim": "Integration touches <5 server files via a useAigate boolean; aigate's hop logic 'does not map' to T3 because no --continue flag exists; model listing out of scope.",
+          "problem": "Three defects. (1) '<5 files' is irreconcilable with the brief's own doctrine: contracts in packages/contracts, reverse states projected for web/desktop/mobile, and docs are required surfaces \u2014 a boolean on ClaudeProvider with no broker-state events gives the event-sourced clients nothing to project and fails requirement (a) 'reporting limits back'. Either scope honestly to fork-only or recount. (2) 'Does not map' is falsified as stated: EXP-3's resume cursor is the in-adapter isomorph of --continue; the correct label is 'mapped mechanically, unmeasured cross-account' (E2). (3) 'Probe headroom before each turn via /api/accounts and skip an instance' contradicts EXP-4: env is bound at construction, so per-turn instance skipping changes nothing about which token the live query holds \u2014 T3-side headroom awareness comes from EXP-5's typed events, not pre-turn polling.",
+          "test": "E2 settles (2). For (1), enumerate the actual diff against the doctrine checklist (contracts, decider/projector events, three clients, docs) and count files \u2014 if the count exceeds 5, amend the claim. (3) is settled textually by EXP-4."
+        },
+        {
+          "member": "trinity",
+          "their_claim": "Phase 2 broker 'dynamically invokes aigate's /api/select and /api/events/limit on session init and retry'.",
+          "problem": "The session-init limb is now verified-sound (EXP-1, EXP-4). The 'and retry' limb silently assumes mid-session account switch works; per EXP-3 it requires kill-query + recreate-with-resume, and cross-account resume via the SDK is UNMEASURED. Shipping the retry limb before E2 risks stranding live threads at exactly the moment the user is most blocked (account exhausted). Gate it, or Phase 2 ships the riskiest half first.",
+          "test": "E2 as specified in my claims. Pass \u2192 retry limb ungates with the kill+resume shape; fail \u2192 Phase 2 is session-init selection only, and exhaustion surfaces as a projected 'parked/reauth-needed' state prompting a new session \u2014 which the event-sourced clients can at least render honestly."
+        },
+        {
+          "member": "brief",
+          "their_claim": "Requirement (a): 'picking the Claude account with the most headroom per turn/session'.",
+          "problem": "Per-turn account selection is architecturally unavailable as stated: EXP-3 (one long-lived query per thread) plus EXP-4 (env frozen at construction) mean changing accounts mid-thread REQUIRES killing and recreating the query \u2014 per-turn selection would mean a kill+resume cycle every turn: expensive, pointless, and dependent on the unmeasured E2. The honest granularity is per-SESSION selection plus hop-on-exhaustion (gated). The brief should be amended so the plan is reviewed against what the code permits, not an aspiration.",
+          "test": "None needed \u2014 settled textually by EXP-3 and EXP-4. Amendment is a wording fix; E2 then determines whether 'hop-on-exhaustion' joins 'per-session' in the shipped granularity."
+        }
+      ],
+      "retractions": [
+        {
+          "was": "If mergeProviderInstanceEnvironment overlays onto server-global process.env, two broker-backed instances race and last writer wins \u2014 the seam may be concurrency-unsafe for exactly its recommended use case.",
+          "now": "No race exists: the function spreads into a fresh object (ProviderInstanceEnvironment.ts:11) and env is captured per adapter; concurrent instances on different accounts cannot clobber each other.",
+          "because": "Chair EXP-4 read the 14 lines directly \u2014 the experiment I named ('read ProviderInstanceEnvironment.ts:3-16, settles it textually') was run and settled against the hazard."
+        },
+        {
+          "was": "Whether a stored login outranks injected CLAUDE_CODE_OAUTH_TOKEN under the Agent SDK with per-instance CLAUDE_CONFIG_DIR is UNMEASURED (my E1) and blocks all design.",
+          "now": "Resolved for design purposes: under isolated CLAUDE_CONFIG_DIR the env token wins (bogus \u2192 401, no Keychain rescue; live aigate token \u2192 success). No Keychain deletion anywhere in the design. I retain one residual: the literal harness was CLI -p, so an SDK-path confirmation probe stays on the Monday list as a 10-minute verification, not a blocker.",
+          "because": "Chair EXP-1 plus the same-binary addendum (pathToClaudeCodeExecutable spawns the cli that was tested; Linux .credentials.json isolation follows by construction)."
+        },
+        {
+          "was": "Mid-thread account hopping works IF the adapter spawns per turn \u2014 park, re-select, next spawn picks up the new account.",
+          "now": "The antecedent is false: EXP-3 shows one long-lived query() per thread. Hop = kill query + recreate with the existing resume cursor + new env, at a turn boundary. Whether that resume works CROSS-ACCOUNT is the new UNMEASURED (E2), and hop ships gated on it.",
+          "because": "Chair EXP-3 (createQuery :4221, sessions Map :4280, resume/resumeSessionAt mechanism) \u2014 proof I had not considered that the mechanism exists but the spawn model differs from my assumption."
+        },
+        {
+          "was": "Whether the SDK surfaces classifiable typed errors for 429/529 through stream-json is unknown; the warden's regex classifier may need full reimplementation.",
+          "now": "Partially resolved: rate_limit_event \u2192 account.rate-limits.updated mapping exists in-adapter (ClaudeAdapter.ts:3507-3552), so detection telemetry needs no classifier port. Still open (narrowed): payload field fidelity (5h/7d reset epochs) and terminal-error typing on hard max \u2014 now E3.",
+          "because": "Chair EXP-5 verified the event mapping; I narrow rather than withdraw the claim because field content and terminal behavior remain unmeasured."
+        }
+      ],
+      "needs_research": [
+        "SDK-path confirmation of EXP-1: run the existing probeClaudeCapabilities with a bogus then a live aigate token under a fresh per-instance CLAUDE_CONFIG_DIR and read init.account.email/tokenSource \u2014 the in-repo instrument exists; nobody has pointed it at this question through query() itself.",
+        "E2 (load-bearing): does SDK query() with resume: <uuid> minted under account A succeed under account B's token and a fresh CLAUDE_CONFIG_DIR, with conversation continuity and init.account reading B?",
+        "E3: exact field payload of rate_limit_event \u2192 account.rate-limits.updated (5h/7d identity, reset epochs, retry-after) and the terminal error shape when an account is hard-maxed mid-session.",
+        "Do any tool/MCP names T3's adapter emits to the claude binary exceed Meta's 64-char gateway limit? (Determines whether the Muse route profile needs a T3-side settings overlay like aigate-muse.sh's.)",
+        "Does updating a provider instance's env/secret trigger an adapter rebuild on settings change, or is a server restart required? (Determines both the broker's reauth reload path and whether Mouse's sidecar fallback can ever propagate.)",
+        "Exact contracts file and event names for broker states (selecting/active/parked/exhausted/reauth-required/broker-unavailable) and the client projection points on web/desktop/mobile \u2014 I cannot name these first-hand; trace one existing provider lifecycle event end-to-end before writing the schema."
+      ],
+      "consensus_ready": false,
+      "dissent": "I can sign the converging shape: Claude-only v1, opt-in generic broker resolved at session start with aigate external behind a no-op default, static route profiles for Muse/Kimi, no Keychain deletion, fork-first with one minimal upstream PR attempted later. I cannot yet sign any version that SHIPS account-hop-on-exhaustion ungated \u2014 Trinity's Phase-2 'retry' limb and the brief's 'hopping when one runs dry' both rest on cross-account SDK resume, which is UNMEASURED. The test that changes my mind is E2 (specified above): one scratch script on the SDK, no T3 diffs, half a day. Pass and I withdraw the dissent entirely; fail and hop is honestly deferred to a projected 'parked \u2014 start new session' state.",
+      "_member": "seraph",
+      "_model": "moonshotai/kimi-k3",
+      "_ok": true
+    },
+    {
+      "_member": "niobe",
+      "_model": "qwen/qwen3.8-max",
+      "_ok": false,
+      "_error": "ValueError: unparseable (finish_reason=length \u2014 RAISE --max-tokens): Expecting property name enclosed in double quotes: line 1 column 3 (char 2)",
+      "position": "",
+      "claims": [],
+      "challenges": [],
+      "retractions": [],
+      "needs_research": [],
+      "consensus_ready": false,
+      "dissent": "member unreachable: ValueError: unparseable (finish_reason=length \u2014 RAISE --max-tokens): Expecting property name enclosed in double quotes: line 1 column 3 (char 2)"
+    }
+  ],
+  "reachable": 5,
+  "total": 6,
+  "unanimous": false,
+  "open_research": [
+    "Do any tool/MCP names T3's adapter emits to the claude binary exceed Meta's 64-char gateway limit? (Determines whether the Muse route profile needs a T3-side settings overlay like aigate-muse.sh's.)",
+    "Does Anthropic's backend enforce account-ownership checks on thread resume state when a thread created by setup_token A is resumed by setup_token B?",
+    "Does SDK resume across two Claude Max accounts preserve transcript and tool idempotency after a partial streamed turn?",
+    "Does aigate's /api/select have any rate limit or do we need to add caching on the T3 side to avoid hammering it on every turn?",
+    "Does direct @anthropic-ai/claude-agent-sdk query() expose init.account identity matching the injected aigate account under a conflicting macOS Keychain login?",
+    "Does the Agent SDK's query() actually reuse the same child process across turns, or does it spawn a new process per turn? This affects whether per-turn env injection is cheap or requires a new adapter/instance.",
+    "Does updating a provider instance's env/secret trigger an adapter rebuild on settings change, or is a server restart required? (Determines both the broker's reauth reload path and whether Mouse's sidecar fallback can ever propagate.)",
+    "Duplicate /api/select assignment rate under fleet N hosts and whether 15m TTL park is enough for T3 turn rates",
+    "E2 (load-bearing): does SDK query() with resume: <uuid> minted under account A succeed under account B's token and a fresh CLAUDE_CONFIG_DIR, with conversation continuity and init.account reading B?",
+    "E3: exact field payload of rate_limit_event \u2192 account.rate-limits.updated (5h/7d identity, reset epochs, retry-after) and the terminal error shape when an account is hard-maxed mid-session.",
+    "Exact client files for provider status reverse states (web/desktop/mobile) for parked/reauth/broker-unavailable",
+    "Exact contracts file and event names for broker states (selecting/active/parked/exhausted/reauth-required/broker-unavailable) and the client projection points on web/desktop/mobile \u2014 I cannot name these first-hand; trace one existing provider lifecycle event end-to-end before writing the schema.",
+    "How does T3's desktop app store and manage provider instance configs? Can we add a 'credentialBroker' field to the UI without breaking mobile/CLI?",
+    "SDK query() identity probe (init.account.email/tokenSource) under isolated CLAUDE_CONFIG_DIR with conflicting Keychain \u2014 CLI EXP-1 parity not literally SDK n=1",
+    "SDK-path confirmation of EXP-1: run the existing probeClaudeCapabilities with a bogus then a live aigate token under a fresh per-instance CLAUDE_CONFIG_DIR and read init.account.email/tokenSource \u2014 the in-repo instrument exists; nobody has pointed it at this question through query() itself.",
+    "What is the exact error event schema the SDK emits on 429/529 rate limits? Can the adapter reliably extract retry-after and unified-reset epochs without regex parsing?",
+    "What is the maintainer response to a narrowly scoped provider-agnostic credential-resolver hook?",
+    "What is the precise behavior of the SDK when CLAUDE_CODE_OAUTH_TOKEN is set but the Keychain also has a token for the same config dir? Does the SDK prefer the env var always, or does it fall back to Keychain when env var is missing? EXP-1 only tested with env var present.",
+    "What typed SDK event or error preserves HTTP 429, 529, quota, and retry-after information for safe classification?",
+    "Whether T3 orchestration can swap ModelSelection/instance env and resume the same ThreadId without UI/session breakage (file-level path through ProviderService + clients)",
+    "Which exact T3 contract events, projectors, and web/desktop/mobile components should represent broker selecting, active, parked, exhausted, reauth-required, unavailable, and disabled states?"
+  ],
+  "dissents": [
+    {
+      "member": "morpheus",
+      "dissent": "I cannot yet agree that account hopping is safe or that the exact first-class contract surface is settled. The deciding tests are direct query() credential-identity verification and a two-account resume test after a partial tool call; until both pass, v1 must select at session start and fail visibly at exhaustion rather than promise seamless mid-thread hopping."
+    },
+    {
+      "member": "mouse",
+      "dissent": "I will not agree to a first-class CredentialBroker type, aigate /api/models, Keychain clearing, or Codex-in-v1. Consensus-ready once the plan is: optional select\u2192inject at adapter build; multi-instance + static Muse/Kimi route envs; hop = phase2 resume+rebuild on rate_limit_event; fork/external aigate bits; Monday = wire select+secret env+probe identity on one instance. Test that flips me on broker ontology: show multi-instance cannot express headroom-ranked pick + park without a new type."
+    },
+    {
+      "member": "tank",
+      "dissent": "I cannot agree to a design that either (a) embeds aigate-specific code in T3 core or (b) requires a new aigate models endpoint. The minimum viable integration is a generic spawn-time env resolution hook in the Claude provider that can be backed by aigate or any other external selector. This hook should be optional and off by default. I also dissent from the assumption that mid-session account hopping is safe without testing the SDK's resume mechanism with a changed env. The 'session-boundary only' approach is safer and should be the default. Finally, I disagree that model listing is a v1 requirement; Muse/Kimi can be statically configured as provider instances with custom env, which is already possible today."
+    },
+    {
+      "member": "seraph",
+      "dissent": "I can sign the converging shape: Claude-only v1, opt-in generic broker resolved at session start with aigate external behind a no-op default, static route profiles for Muse/Kimi, no Keychain deletion, fork-first with one minimal upstream PR attempted later. I cannot yet sign any version that SHIPS account-hop-on-exhaustion ungated \u2014 Trinity's Phase-2 'retry' limb and the brief's 'hopping when one runs dry' both rest on cross-account SDK resume, which is UNMEASURED. The test that changes my mind is E2 (specified above): one scratch script on the SDK, no T3 diffs, half a day. Pass and I withdraw the dissent entirely; fail and hop is honestly deferred to a projected 'parked \u2014 start new session' state."
+    }
+  ],
+  "retractions": [
+    {
+      "was": "[CONTESTED] I previously treated credential precedence under T3's Agent SDK and isolated config as wholly unmeasured.",
+      "now": "[VERIFIED with residual uncertainty] The same spawned Claude binary honors an injected OAuth token under a fresh CLAUDE_CONFIG_DIR, and the chair's addendum says this is the practical SDK code path; only direct query() identity confirmation and future-version behavior remain unmeasured.",
+      "because": "Chair EXP-1 and its addendum supplied the missing controlled bogus-token/live-token evidence.",
+      "member": "morpheus"
+    },
+    {
+      "was": "[THEORY] I previously proposed deferring account hopping until the query lifecycle was investigated.",
+      "now": "[VERIFIED architecture, THEORY safety] EXP-3 establishes one long-lived query per thread and an available resume cursor, so turn-boundary hop is now the concrete implementation target; safety after partial tool execution remains a testable theory.",
+      "because": "Chair EXP-3 supplied direct ClaudeAdapter lifecycle and resume-state findings.",
+      "member": "morpheus"
+    },
+    {
+      "was": "[CONTESTED] I previously described dynamic environment resolution as potentially available through the existing seam.",
+      "now": "[VERIFIED] Environment is captured at adapter construction and reused for query options; dynamic broker resolution requires new code or adapter reconstruction.",
+      "because": "Chair EXP-4 traced makeClaudeEnvironment and queryOptions.env in ClaudeAdapter.ts.",
+      "member": "morpheus"
+    },
+    {
+      "was": "Assumed macOS Keychain clearing or shadow login deletion was necessary before injecting aigate credentials.",
+      "now": "Keychain clearing is completely unnecessary under T3 Code's architecture.",
+      "because": "Chair EXP-1 demonstrated that per-instance CLAUDE_CONFIG_DIR isolation prevents Keychain override when CLAUDE_CODE_OAUTH_TOKEN is supplied.",
+      "member": "trinity"
+    },
+    {
+      "was": "Keychain/stored login outranking CLAUDE_CODE_OAUTH_TOKEN under Agent SDK + per-instance CLAUDE_CONFIG_DIR is UNMEASURED and blocks every integration sketch.",
+      "now": "VERIFIED safe under isolated CLAUDE_CONFIG_DIR (EXP-1): env wins; do not delete Keychain; no fight with ai CLI on same Mac.",
+      "because": "Chair EXP-1 bogus-token and live-token probes, 2026-08-17; ClaudeHome per-instance isolation.",
+      "member": "mouse"
+    },
+    {
+      "was": "Use only an external sidecar refreshing env with zero T3 code and treat any in-process select as cathedral.",
+      "now": "A tiny optional select-at-adapter-build inside T3 (or sidecar + instance rebuild trigger) is justified; still reject a generic CredentialBroker ontology and upstream theater. Env is static at construction (EXP-4) so pure external file refresh without rebuild does nothing to a live adapter.",
+      "because": "EXP-4 (env once at makeClaudeEnvironment) and EXP-3 (resume hop needs intentional re-create) force one honest hook point; chair research.",
+      "member": "mouse"
+    },
+    {
+      "was": "Defer all hop discussion as unmeasured process vs session confusion.",
+      "now": "Hop mechanism is known: kill query + resume + new env at turn boundary; rate_limit_event already in adapter. Still phase-2 glue, not Monday.",
+      "because": "Chair EXP-3 and EXP-5.",
+      "member": "mouse"
+    },
+    {
+      "was": "TANK claimed: 'UNMEASURED: aigate-run.sh's keychain-delete trick... may not apply under Agent SDK with per-instance CLAUDE_CONFIG_DIR \u2014 but it is UNMEASURED.'",
+      "now": "VERIFIED: CLAUDE_CODE_OAUTH_TOKEN env beats Keychain when CLAUDE_CONFIG_DIR is isolated per-instance (EXP-1). No Keychain clearing needed. The shadowing hazard is resolved for the SDK path with per-instance isolation.",
+      "because": "Chair EXP-1 provided conclusive evidence on the same binary the SDK spawns. The Keychain outranking is specific to the default config dir, not T3's isolated CLAUDE_CONFIG_DIR.",
+      "member": "tank"
+    },
+    {
+      "was": "TANK claimed: 'mergeProviderInstanceEnvironment overlays onto process.env' (implying possible concurrency race).",
+      "now": "VERIFIED: mergeProviderInstanceEnvironment does NOT mutate process.env; it creates a new object per instance (EXP-4). No race.",
+      "because": "Chair EXP-4 explicitly read the code and confirmed it spreads into a new object. The brief's wording was ambiguous; the actual code is safe.",
+      "member": "tank"
+    },
+    {
+      "was": "If mergeProviderInstanceEnvironment overlays onto server-global process.env, two broker-backed instances race and last writer wins \u2014 the seam may be concurrency-unsafe for exactly its recommended use case.",
+      "now": "No race exists: the function spreads into a fresh object (ProviderInstanceEnvironment.ts:11) and env is captured per adapter; concurrent instances on different accounts cannot clobber each other.",
+      "because": "Chair EXP-4 read the 14 lines directly \u2014 the experiment I named ('read ProviderInstanceEnvironment.ts:3-16, settles it textually') was run and settled against the hazard.",
+      "member": "seraph"
+    },
+    {
+      "was": "Whether a stored login outranks injected CLAUDE_CODE_OAUTH_TOKEN under the Agent SDK with per-instance CLAUDE_CONFIG_DIR is UNMEASURED (my E1) and blocks all design.",
+      "now": "Resolved for design purposes: under isolated CLAUDE_CONFIG_DIR the env token wins (bogus \u2192 401, no Keychain rescue; live aigate token \u2192 success). No Keychain deletion anywhere in the design. I retain one residual: the literal harness was CLI -p, so an SDK-path confirmation probe stays on the Monday list as a 10-minute verification, not a blocker.",
+      "because": "Chair EXP-1 plus the same-binary addendum (pathToClaudeCodeExecutable spawns the cli that was tested; Linux .credentials.json isolation follows by construction).",
+      "member": "seraph"
+    },
+    {
+      "was": "Mid-thread account hopping works IF the adapter spawns per turn \u2014 park, re-select, next spawn picks up the new account.",
+      "now": "The antecedent is false: EXP-3 shows one long-lived query() per thread. Hop = kill query + recreate with the existing resume cursor + new env, at a turn boundary. Whether that resume works CROSS-ACCOUNT is the new UNMEASURED (E2), and hop ships gated on it.",
+      "because": "Chair EXP-3 (createQuery :4221, sessions Map :4280, resume/resumeSessionAt mechanism) \u2014 proof I had not considered that the mechanism exists but the spawn model differs from my assumption.",
+      "member": "seraph"
+    },
+    {
+      "was": "Whether the SDK surfaces classifiable typed errors for 429/529 through stream-json is unknown; the warden's regex classifier may need full reimplementation.",
+      "now": "Partially resolved: rate_limit_event \u2192 account.rate-limits.updated mapping exists in-adapter (ClaudeAdapter.ts:3507-3552), so detection telemetry needs no classifier port. Still open (narrowed): payload field fidelity (5h/7d reset epochs) and terminal-error typing on hard max \u2014 now E3.",
+      "because": "Chair EXP-5 verified the event mapping; I narrow rather than withdraw the claim because field content and terminal behavior remain unmeasured.",
+      "member": "seraph"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "_member": "niobe",
+  "_model": "qwen/qwen3.8-max",
+  "_ok": false,
+  "_error": "ValueError: unparseable (finish_reason=length \u2014 RAISE --max-tokens): Expecting property name enclosed in double quotes: line 1 column 3 (char 2)",
+  "position": "",
+  "claims": [],
+  "challenges": [],
+  "retractions": [],
+  "needs_research": [],
+  "consensus_ready": false,
+  "dissent": "member unreachable: ValueError: unparseable (finish_reason=length \u2014 RAISE --max-tokens): Expecting property name enclosed in double quotes: line 1 column 3 (char 2)"
+}

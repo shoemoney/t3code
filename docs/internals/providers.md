@@ -9,13 +9,13 @@ orchestration layer does not know which one is behind a thread.
 
 [`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with five entries:
 
-| Driver kind   | Driver source                           |
-| ------------- | --------------------------------------- |
-| `codex`       | [`Drivers/CodexDriver.ts`][codex]       |
-| `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]     |
-| `cursor`      | [`Drivers/CursorDriver.ts`][cursor]     |
-| `grok`        | [`Drivers/GrokDriver.ts`][grok]         |
-| `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode] |
+| Driver kind   | Driver source                              |
+| ------------- | ------------------------------------------ |
+| `codex`       | [`Drivers/CodexDriver.ts`][codex]          |
+| `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude-driver] |
+| `cursor`      | [`Drivers/CursorDriver.ts`][cursor]        |
+| `grok`        | [`Drivers/GrokDriver.ts`][grok]            |
+| `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]    |
 
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
@@ -53,6 +53,23 @@ Provider output comes back as internal commands such as `thread.message.assistan
 `thread.session.set`, which clients observe through `orchestration.subscribeThread`. See
 [overview.md](./overview.md) for the command/event loop.
 
+## Credential broker resolution
+
+Providers like Claude can be configured with an optional credential broker: an account-selector
+endpoint that returns environment-specific credentials for a session. At query construction time
+(before a turn starts), if the provider instance has a broker URL configured, the adapter calls
+`GET {brokerUrl}/api/select?host={hostname}` with `Authorization: Bearer {token}`, where `token`
+comes from a named sensitive environment variable (default: `AIGATE_TOKEN`). The broker returns a
+JSON object with `account` and `setup_token` fields; the adapter overlays these as
+`AIGATE_ACCOUNT` and `CLAUDE_CODE_OAUTH_TOKEN` on the provider's captured environment for that
+session only. Broker-provided credentials take precedence for that one query, and are never
+persisted to the instance config. If the broker is unreachable or returns a 401, the adapter logs
+a warning with the failure reason and uses the instance's own environment instead; an unconfigured
+broker resolves to `disabled` silently and the session simply uses the instance environment.
+Resolution failures are annotated on the session's trace span
+(`claude.broker.status` and `claude.broker.account`), but do not block session startup. See
+[`ClaudeAdapter.ts`][claude] and [`ClaudeCredentialBroker.ts`][broker] for implementation.
+
 ## Server-side workers
 
 Provider work flows through three queue-backed workers. All three are built with
@@ -77,7 +94,8 @@ when a request opens (approval) or user input is requested, via
 
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
 [codex]: ../../apps/server/src/provider/Drivers/CodexDriver.ts
-[claude]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts
+[claude-driver]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts
+[claude]: ../../apps/server/src/provider/Layers/ClaudeAdapter.ts
 [cursor]: ../../apps/server/src/provider/Drivers/CursorDriver.ts
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
@@ -90,3 +108,4 @@ when a request opens (approval) or user input is requested, via
 [ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
 [cmd]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
 [checkpoint]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
+[broker]: ../../apps/server/src/provider/Layers/ClaudeCredentialBroker.ts

@@ -96,6 +96,10 @@ The live backend agent implementation and its event stream. The main service is 
 
 The backend agent runtime that actually performs work. Five drivers ship built in: Codex, Claude, Cursor, Grok, and OpenCode. See [ProviderService.ts][14], [ProviderAdapter.ts][15], and [CodexAdapter.ts][17] as a representative adapter.
 
+#### Credential broker
+
+An account-selector endpoint that picks provider credentials based on the hostname running a session. Configured on a per-instance basis, the broker is called at session start and returns environment-specific credentials (such as API tokens or OAuth tokens) that overlay the instance's own environment. Fallback to instance credentials is automatic on any broker error. See [ClaudeCredentialBroker.ts][25] and the credential broker section in [providers.md][16].
+
 #### Session
 
 The live provider-backed runtime attached to a thread. Session shape is in [the orchestration contracts][1], and lifecycle is managed in [ProviderService.ts][14].
@@ -179,3 +183,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ../../apps/server/src/provider/Layers/ClaudeCredentialBroker.ts

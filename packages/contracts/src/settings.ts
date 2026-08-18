@@ -394,9 +394,33 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    brokerUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Credential broker URL",
+        description:
+          "Optional. Account-selector endpoint called at session start to pick credentials for this instance (aigate-compatible: GET /api/select). Empty disables brokering.",
+        providerSettingsForm: {
+          placeholder: "https://broker.example.com",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    brokerTokenEnv: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Credential broker token variable",
+        description:
+          "Name of an environment variable on this instance holding the broker bearer token. Add the token as a sensitive environment variable. Defaults to AIGATE_TOKEN.",
+        providerSettingsForm: {
+          placeholder: "AIGATE_TOKEN",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "launchArgs"],
+    order: ["binaryPath", "homePath", "launchArgs", "brokerUrl", "brokerTokenEnv"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -732,6 +756,8 @@ const ClaudeSettingsPatch = Schema.Struct({
   homePath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
   launchArgs: Schema.optionalKey(TrimmedString),
+  brokerUrl: Schema.optionalKey(TrimmedString),
+  brokerTokenEnv: Schema.optionalKey(TrimmedString),
 });
 
 const CursorSettingsPatch = Schema.Struct({

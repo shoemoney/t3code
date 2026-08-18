@@ -1,0 +1,106 @@
+{
+  "position": "Build it fork-first as a generic, opt-in 'credential broker' resolved at claude-subprocess spawn time: for broker-enabled instances the server calls an external selector (aigate /api/select, or any endpoint/command returning an env overlay) and merges the result into the child env, with the broker token stored through the existing sensitive ProviderInstanceEnvironment / ServerSecretStore machinery. Alt-endpoint models (Muse, Kimi K3) ship as T3-side static pseudo-model instances of the claude provider \u2014 the brief's option (a) \u2014 because aigate verifiably has no models endpoint and the route parameters are hand-tuned facts, not enumerable data. Headroom management ports the warden's two mechanisms into the server: proactive exclusion from /api/accounts before spawn, and reactive parking via /api/events/limit when typed 429/quota errors surface, with parked/reauth-needed projected into contracts for all clients. Per-provider decisions: Claude supported in v1; Codex, Cursor, Grok, OpenCode explicitly unsupported (aigate holds no account pools for them; the gpt rung is retired). But no integration code ships until two zero-code checks land: E0, whether the env seam is per-child or a process.env mutation, and E1, whether a stored login outranks injected env under the Agent SDK with per-instance CLAUDE_CONFIG_DIR \u2014 if it does, the per-spawn design needs a shadow-login strategy before anything else. Monday morning: read the 14 lines of ProviderInstanceEnvironment.ts and run E1 using probeClaudeCapabilities' init.account.email/tokenSource as the identity readout \u2014 half a day, no diffs.",
+  "claims": [
+    {
+      "claim": "A per-instance env-injection seam with a sensitive-flag contract and encrypted secret storage already exists in this repo and is the only verified attachment point for broker-resolved credentials.",
+      "status": "VERIFIED",
+      "evidence": "Chair-cited: apps/server/src/provider/ProviderInstanceEnvironment.ts:3-16, invoked at Drivers/ClaudeDriver.ts:128; contract ProviderInstanceEnvironmentVariable with sensitive flag at packages/contracts/src/providerInstance.ts:104-113; ServerSecretStore re-materialization at serverSettings.ts:316-376; an existing test already pushes ANTHROPIC_API_KEY through this path. Disclosure: I have not re-opened these files this session; I am relying on the chair's citations.",
+      "test": ""
+    },
+    {
+      "claim": "The seam as described is static per-instance configuration, not per-spawn dynamic resolution; a broker needs env resolved at each query() spawn, and nothing cited proves the driver re-reads instance env on every spawn rather than caching it.",
+      "status": "CONTESTED",
+      "evidence": "Brief describes env as stored instance settings 're-materialized on read' (serverSettings.ts:316-376) but does not state the read cadence relative to subprocess spawns; ClaudeAdapter builds query options around Layers/ClaudeAdapter.ts:4154-4192 without a cited env-refresh point.",
+      "test": "Trace the read path: add a log line at ClaudeDriver.ts:128 printing the resolved env hash per sendTurn across a 3-turn thread; if the hash is computed once per instance lifetime, the broker hook must be placed at a new per-spawn resolution point, not in settings materialization."
+    },
+    {
+      "claim": "If mergeProviderInstanceEnvironment() overlays onto the server-global process.env (as the brief's wording states), then two broker-backed instances on different Claude accounts running concurrent turns race: whichever overlay lands last wins for both spawns.",
+      "status": "CONTESTED",
+      "evidence": "Brief verbatim: the function 'overlays per-instance ProviderInstanceEnvironment variables onto process.env'. The same brief says ClaudeAdapter passes an env option to query() \u2014 per-child. These two descriptions are unreconciled.",
+      "test": "Read ProviderInstanceEnvironment.ts:3-16 (14 lines, settles it textually); then a unit test spawning two instances concurrently with distinct ANTHROPIC_API_KEY values, asserting each child process observes its own key."
+    },
+    {
+      "claim": "Whether a stored Claude login (macOS Keychain 'Claude Code-credentials') outranks an injected CLAUDE_CODE_OAUTH_TOKEN under the Agent SDK path with per-instance CLAUDE_CONFIG_DIR is unmeasured, and the entire per-spawn account-selection design silently runs the wrong account if it does.",
+      "status": "UNMEASURED",
+      "evidence": "Shadowing is documented only operationally for the interactive CLI in aigate-run.sh (keychain rewrite ~1s after launch; deletion before each run). No measurement exists for the SDK path; ClaudeHome.ts:27-33 sets CLAUDE_CONFIG_DIR per instance but nobody has checked whether that relocates credential precedence off the Keychain.",
+      "test": "E1: create a T3 instance with a fresh CLAUDE_CONFIG_DIR; store a Keychain login for account B; inject CLAUDE_CODE_OAUTH_TOKEN for account A via instance env; run the existing probeClaudeCapabilities() and read init.account {email, tokenSource} (Layers/ClaudeProvider.ts:732-975). Repeat with the Keychain entry deleted, and repeat while watching whether the binary rewrites the Keychain under a custom config dir. The init.account readout is the identity-of-evidence instrument \u2014 it already exists in-repo."
+    },
+    {
+      "claim": "Mid-thread account hopping works under T3 if the adapter spawns per turn: park the exhausted account via POST /api/events/limit, re-select with exclude= on the next spawn, and resume carries the conversation \u2014 the warden already proves cross-account continuation at the CLI level with claude --continue.",
+      "status": "THEORY",
+      "evidence": "aigate-run.sh's interactive supervision relaunches claude --continue on a new account and, per the brief, 'same conversation carries over'. T3's spawn lifecycle (per-turn process vs long-lived process) is not established anywhere in the brief.",
+      "test": "Two-part: (1) instrument ClaudeDriver to log child PID per sendTurn across a 5-turn thread to establish spawn granularity; (2) mid-thread, POST /api/events/limit for the active account, send the next turn, and assert via init.account.email that identity flipped while the reply demonstrates thread continuity."
+    },
+    {
+      "claim": "aigate cannot serve model listing today in any form: there is no models endpoint, selection never filters by model, and /api/capabilities exposes only provider key counts and claude account counts with no model identifiers.",
+      "status": "VERIFIED",
+      "evidence": "Brief's Operator-researched, chair-spot-checked server internals: pickRanked at src/server.js:295-298; 65-provider catalog in src/providers.js holds keys, never enumerates models; /api/capabilities is a read-only registry with no secrets and no models.",
+      "test": ""
+    },
+    {
+      "claim": "Alt-endpoint routes (Muse, Kimi K3) belong as T3-side static pseudo-model instances of the claude provider, not an aigate /api/models endpoint, because the route parameters (CLAUDE_CODE_MAX_CONTEXT_TOKENS=1007997, all-tier model mapping, 64-char tool-name workaround settings file, mutually exclusive auth families) are hand-tuned operational facts that no gateway currently publishes machine-readably.",
+      "status": "THEORY",
+      "evidence": "aigate-muse.sh as read by the chair: every tier env mapped by hand, context window hardcoded, one plugin disabled via dedicated --settings, CLAUDE_CODE_OAUTH_TOKEN must be unset on muse/kimi routes. None of this is derivable from api.meta.ai responses cited anywhere.",
+      "test": "Falsify by producing a machine-readable descriptor from aigate or the Meta/Kimi gateways sufficient to generate the env overlay automatically (fields: context window, tier mapping, tool-name constraints). If none exists \u2014 and a one-off probe of the gateways' /v1/models behavior would confirm \u2014 option (a) stands and option (b) is deferred to a future aigate PR."
+    },
+    {
+      "claim": "Upstream will not take this feature as one PR: CONTRIBUTING.md states the project is not actively accepting contributions, so the integration is fork-first, shaped generically (external env resolver at spawn) so a small focused PR remains possible later.",
+      "status": "CONTESTED",
+      "evidence": "VERIFIED portion: CONTRIBUTING.md's 'not actively accepting contributions' per the brief, and the maintainers' stated small-PRs-only posture. Unproven portion: that a minimal generic spawn-time env-resolver PR would be accepted \u2014 that is inference, not measurement.",
+      "test": "After the fork proves the design, open one focused PR adding only the spawn-time external env-resolution hook (no aigate references) and observe maintainer disposition. Cost: one PR."
+    },
+    {
+      "claim": "Concurrent /api/select calls from multiple T3 hosts can be handed the same account, since selection is best-headroom ranking with client-supplied exclude lists and no cited lease or stickiness mechanism.",
+      "status": "UNMEASURED",
+      "evidence": "pickRanked (src/server.js:295-298) as described has no transaction or lease; exclusion is caller-supplied. Nobody has measured duplicate-assignment under parallel selects.",
+      "test": "From two hosts, fire N=50 parallel /api/select requests against a fresh state and count duplicate account assignments; then verify that the resulting collisions self-heal via limit events within one parking TTL (default 15m) \u2014 if they do, the race is benign and needs no aigate change for v1."
+    },
+    {
+      "claim": "The warden's rate-limit classifier (regexes over CLI text: 529 vs 429/quota) cannot be lifted directly into the server, and whether the SDK surfaces classifiable typed errors for 429/529 through the stream-json adapter is unknown.",
+      "status": "UNMEASURED",
+      "evidence": "aigate-run.sh classifies human-readable headless output; T3 consumes stream-json via the SDK. No cited source documents the error event schema the adapter exposes on provider rate limits.",
+      "test": "Force a rate limit (park all accounts except one near cap via /api/events/limit, then drive traffic), capture the adapter's emitted events, and confirm whether status code / retry-after / unified-reset epochs survive into typed events. If they do not, the classifier must be reimplemented at the stream-json layer and that is new server code, sized accordingly."
+    },
+    {
+      "claim": "Deleting the user's stored Claude login (the warden's clear_shadow_login behavior) must be an explicit opt-in per instance in an open-source product with 100k+ users, never a silent default of enabling the broker.",
+      "status": "THEORY",
+      "evidence": "aigate-run.sh deletes the Keychain entry / ~/.claude/.credentials.json unconditionally; on a shared box that destroys the login the T3 desktop app or interactive CLI may depend on \u2014 the brief's hazard #5. Normative weight: silent credential destruction is the class of behavior that generates fork-hostile issue storms.",
+      "test": "Ship the fork with the destructive clear gated behind an explicit config flag with a docs warning; measure issue reports and fork feedback mentioning lost logins. If E1 shows CLAUDE_CONFIG_DIR isolation makes env injection win without any deletion, drop the destructive path entirely \u2014 that is the preferred outcome."
+    }
+  ],
+  "challenges": [
+    {
+      "member": "brief",
+      "their_claim": "Env injection point exists and is chair-verified: mergeProviderInstanceEnvironment() overlays per-instance variables onto process.env, called in Drivers/ClaudeDriver.ts:128 \u2014 implying the seam is sufficient for account brokering.",
+      "problem": "'Overlays onto process.env' describes mutating the server-global environment; the same brief describes a per-child env option built in ClaudeAdapter. If the global-mutation reading is true, the recommended seam is concurrency-unsafe for exactly the multi-account use case it is being recommended for \u2014 two instances, two accounts, last writer wins. Existence of the seam is verified; its fitness is not.",
+      "test": "Read ProviderInstanceEnvironment.ts:3-16 (settles the text), then run the two-instance concurrent-spawn unit test with distinct keys and assert per-child isolation."
+    },
+    {
+      "member": "brief",
+      "their_claim": "Model listing option (c): reuse /api/capabilities.",
+      "problem": "The brief's own verified internals state /api/capabilities returns provider key counts and claude account/selectable counts with no model identifiers and no secrets. Option (c) is therefore not a live option as written \u2014 it is option (b) (a new aigate endpoint) wearing a read-only costume. Keeping it in the decision space inflates a three-way choice that is actually two-way.",
+      "test": "GET /api/capabilities with a valid bearer token and diff the response fields against the minimum model-listing requirement (model id, route env, context window). Absence of every field retires (c)."
+    },
+    {
+      "member": "brief",
+      "their_claim": "Zero-diff shim option: point T3's claude path at a wrapper like aigate-run.sh, requiring no T3 code changes.",
+      "problem": "aigate-run.sh's headless supervision is a retry loop classifying human-readable CLI text; the SDK speaks stream-json, so an unmodified wrapper either misparses classification or corrupts framing on retry. It also has no channel to report limit events into T3's event-sourced model, failing the brief's own requirement (a) ('reporting limits back'). A reduced pass-through shim (select + inject + exec, no retry) survives this critique but then cannot hop accounts on exhaustion, which is half the feature.",
+      "test": "Wrap the SDK spawn with the unmodified script, drive a forced 429, and inspect (1) whether stream-json framing survives the retry path and (2) whether any typed limit event reaches a T3 client. Predicted: both fail; the shim is then scoped honestly as a v0 stopgap for env injection only."
+    }
+  ],
+  "retractions": [],
+  "needs_research": [
+    "Does mergeProviderInstanceEnvironment() mutate process.env or build a per-child env object? (14-line file read, ProviderInstanceEnvironment.ts:3-16)",
+    "Does the Claude adapter spawn one claude subprocess per turn or hold a long-lived process per thread? (instrument child PID per sendTurn)",
+    "Does a non-default CLAUDE_CONFIG_DIR relocate OAuth credential storage off the macOS Keychain, or is the Keychain item name constant regardless of config dir?",
+    "What is the exact error-event schema the Agent SDK surfaces through stream-json on 429/529 \u2014 does it include status, retry-after, or the anthropic-ratelimit-unified reset epochs aigate's poller stores?",
+    "Does /api/select have any lease, stickiness, or transactional behavior for concurrent cross-host callers, or is duplicate assignment purely healed by park TTLs?",
+    "Where is CLAUDE_MODEL_CATALOG enforced \u2014 will a pseudo-model id (e.g. muse-spark-1.2-contributor) pass ModelSelection validation in ProviderService.startSession/sendTurn without a contract change, and what is the minimal contract diff for web/desktop/mobile?",
+    "Is there any supported Claude Code mechanism (env var or settings key) to disable Keychain credential use outright, making the destructive clear_shadow_login unnecessary? I have no first-hand knowledge of one."
+  ],
+  "consensus_ready": false,
+  "dissent": "I cannot sign an implementation ordering that starts with code. Two identity-of-evidence questions can each invert the design, and both are zero-code, half-day checks: E0 \u2014 is the env seam per-child or a process-global mutation (read ProviderInstanceEnvironment.ts:3-16, then the concurrent two-instance spawn test); E1 \u2014 does a stored login outrank injected env under the SDK with per-instance CLAUDE_CONFIG_DIR (probeClaudeCapabilities reading init.account.email/tokenSource with and without a Keychain login present). If E1 shows shadowing, per-spawn selection is silently broken and the plan needs a shadow-login strategy before any broker code; if E0 shows global mutation, the seam the brief recommends is concurrency-unsafe for the exact multi-account feature being designed. Once both land I expect to join consensus on the fork-first generic broker with static pseudo-models.",
+  "_member": "seraph",
+  "_model": "moonshotai/kimi-k3",
+  "_ok": true
+}

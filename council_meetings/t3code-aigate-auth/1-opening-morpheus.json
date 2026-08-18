@@ -1,0 +1,117 @@
+{
+  "position": "THEORY: Ship Claude account brokering first as an optional, external broker integration that uses T3's existing per-instance environment and secret-store seams, rather than embedding aigate-specific behavior in the core provider. THEORY: Represent Muse and Kimi as explicitly configured Claude-compatible route profiles, not as models discovered from aigate; defer account hopping within a live T3 session until the Agent SDK and credential-isolation experiments pass. THEORY: Keep Codex, Cursor, Grok, and OpenCode unchanged in v1, while defining generic broker contracts so later providers can opt in without provider-specific assumptions.",
+  "claims": [
+    {
+      "claim": "VERIFIED: T3 can inject sensitive, per-provider-instance environment variables and isolate Claude configuration directories.",
+      "status": "VERIFIED",
+      "evidence": "apps/server/src/provider/ProviderInstanceEnvironment.ts:3-16; Drivers/ClaudeDriver.ts:128; packages/contracts/src/providerInstance.ts:104-113; serverSettings.ts:316-376; Drivers/ClaudeHome.ts:27-33; the brief also reports an existing ANTHROPIC_API_KEY test.",
+      "test": ""
+    },
+    {
+      "claim": "VERIFIED: aigate selects the account with the lowest max(5-hour usage, 7-day usage) among eligible accounts and exposes selection, usage, limit-event, and provider-key APIs, but exposes no model-listing endpoint.",
+      "status": "VERIFIED",
+      "evidence": "Operator-researched aigate src/server.js:295-298; measured GET /api/accounts and GET /api/select; listed API inventory; README/COMPLIANCE.md.",
+      "test": ""
+    },
+    {
+      "claim": "THEORY: A first release should call aigate at process/session start and inject the selected Claude OAuth token, rather than attempting per-turn account switching.",
+      "status": "THEORY",
+      "evidence": "The existing aigate-run.sh rotates by launching a new process and resumes interactive work with --continue, while T3 uses the Agent SDK query/session path in Layers/ClaudeAdapter.ts:4154-4192 and ProviderService.startSession/sendTurn.",
+      "test": "Run a controlled T3 session against two disposable Claude accounts, exhaust or synthetically trigger the first account's quota, then verify whether a new query can resume the same thread on the second account without lost context, duplicated tool effects, or protocol corruption."
+    },
+    {
+      "claim": "CONTESTED: Environment-injected Claude OAuth credentials may or may not override a stored macOS Keychain login when T3 uses the Agent SDK and an instance-specific CLAUDE_CONFIG_DIR.",
+      "status": "CONTESTED",
+      "evidence": "aigate-run.sh documents macOS Keychain shadowing and deletion as operationally required, but the brief explicitly states that applicability to T3's Agent SDK path is unmeasured; T3's ClaudeHome.ts provides per-instance config isolation.",
+      "test": "On macOS, create two isolated T3 Claude instances with distinct injected credentials and a deliberately conflicting Keychain login, run identical authenticated probes, and compare init.account identity and server-side account telemetry with and without Keychain removal."
+    },
+    {
+      "claim": "THEORY: T3 should not delete a user's global Keychain credential as part of its broker integration.",
+      "status": "THEORY",
+      "evidence": "aigate-run.sh's clear_shadow_login deletes the developer's stored Claude credential, while T3 is an embedded multi-provider application that must coexist with ordinary Claude Code use.",
+      "test": "Run brokered T3, standalone Claude Code, and simultaneous sessions on one Mac; confirm that brokered requests use the selected account, standalone requests retain their login, and no credential is rewritten or deleted outside the broker's isolated configuration scope."
+    },
+    {
+      "claim": "THEORY: Model discovery should initially be a T3-side, versioned route-profile contract rather than a new aigate model endpoint.",
+      "status": "THEORY",
+      "evidence": "aigate has no model endpoint; Muse requires a specific base URL, bearer auth, model and tier mappings, context limit, and tool-name workaround, while Kimi requires a separate Anthropic-compatible route and auth family.",
+      "test": "Implement route profiles for native Claude, Muse, and Kimi and verify that each produces a valid model catalog entry, correct environment, successful probe, correct context limit, and no cross-route credential leakage; compare maintenance cost against a server-provided /api/models endpoint."
+    },
+    {
+      "claim": "VERIFIED: Muse cannot safely be treated as only a model-name substitution because its route requires distinct authentication and runtime settings.",
+      "status": "VERIFIED",
+      "evidence": "aigate-muse.sh behavior in the brief: ANTHROPIC_BASE_URL=https://api.meta.ai, ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN unset, all Claude model-tier variables mapped, CLAUDE_CODE_MAX_CONTEXT_TOKENS=1007997, and a dedicated settings file for the 64-character tool-name limit.",
+      "test": ""
+    },
+    {
+      "claim": "THEORY: Account exhaustion should be handled first at session boundaries, with explicit reverse states such as selecting, active, parked, exhausted, reauth-required, and broker-unavailable; automatic mid-session hopping is a later capability.",
+      "status": "THEORY",
+      "evidence": "aigate already models parking, usage refresh, and reauth_needed; T3 is event-sourced and must represent reversible provider/session state rather than hiding a relaunch in a shell process.",
+      "test": "Define contract events and replay them through server, web, desktop, and mobile clients; simulate selection failure, limit parking, reauthentication, cancellation, and broker outage, then verify deterministic projection and reversible UI state."
+    },
+    {
+      "claim": "THEORY: The smallest maintainable implementation is an optional generic broker interface with an aigate adapter, not hardcoded aigate calls inside ClaudeAdapter.",
+      "status": "THEORY",
+      "evidence": "AGENTS.md requires optional, generic, remote-ready integrations; T3 already has provider-instance environment and secret seams; hardcoding a LAN URL or vendor-specific logic would violate that architecture.",
+      "test": "Implement a no-op broker plus an aigate implementation selected by configuration, then run the full provider matrix with the broker disabled and confirm byte-for-byte equivalent behavior for existing configurations."
+    },
+    {
+      "claim": "VERIFIED: There is no evidence in the supplied repository facts that Codex, Cursor, Grok, or OpenCode currently have an aigate-compatible account-rotation contract.",
+      "status": "VERIFIED",
+      "evidence": "The brief identifies aigate's current selector as Claude-specific, reports the GPT rung retired, and supplies no account-broker implementation for those adapters.",
+      "test": ""
+    },
+    {
+      "claim": "THEORY: Provider decisions for v1 should be Claude=opt-in broker and route profiles; Codex=unchanged/no aigate rotation; Cursor=unchanged/no support; Grok=unchanged/no support; OpenCode=unchanged/no support.",
+      "status": "THEORY",
+      "evidence": "Only Claude account selection and the Muse/Kimi Claude-binary routes are evidenced; Codex plan rotation is explicitly unknown and the GPT path is reported retired.",
+      "test": "For each adapter, document auth inputs, process boundary, model discovery, quota signal, and safe retry semantics; promote a provider only after an account-specific integration test demonstrates all five."
+    },
+    {
+      "claim": "THEORY: The ordered implementation should be: (1) Monday spike for Agent SDK credential precedence and isolated config, (2) add generic broker configuration and contracts, (3) implement aigate selection/telemetry with fail-closed behavior, (4) add Claude route profiles for native Claude/Muse/Kimi, (5) add session-boundary retry and reverse-state events, (6) wire all clients and documentation, and (7) submit only a small generic upstream PR while keeping the aigate adapter external if maintainers reject it.",
+      "status": "THEORY",
+      "evidence": "This sequencing follows the load-bearing unknown in Claude credential precedence, existing T3 seams in ProviderInstanceEnvironment.ts and ClaudeHome.ts, and the stated upstream constraint that large features are likely to be closed.",
+      "test": "Complete each phase with an integration test and replay test; specifically require that disabling the broker restores current behavior, aigate outage does not expose secrets or silently select the wrong account, and web/desktop/mobile render every broker state."
+    },
+    {
+      "claim": "UNMEASURED: The exact T3 event names, client stores, and UI components required to expose broker states across web, desktop, and mobile cannot be identified from the supplied brief alone.",
+      "status": "UNMEASURED",
+      "evidence": "The brief identifies the event-sourced architecture and contracts location but does not provide client file paths or existing provider-status event schemas.",
+      "test": "Trace one existing provider lifecycle command from packages/contracts through server decider/projector and each client, then record the exact files and add broker states beside that established path."
+    }
+  ],
+  "challenges": [
+    {
+      "member": "brief",
+      "their_claim": "The existing aigate-run.sh behavior can serve as the model for first-class T3 integration.",
+      "problem": "A shell wrapper owns process relaunch, Keychain deletion, output classification, and --continue semantics, whereas T3 uses the Agent SDK and event-sourced session management; assuming equivalence risks silently authenticating the wrong account or duplicating tool effects.",
+      "test": "Execute the credential-precedence and session-resume experiments described above against the actual T3 ClaudeDriver and Agent SDK."
+    },
+    {
+      "member": "brief",
+      "their_claim": "Aigate's existing APIs are sufficient for account brokering and model support.",
+      "problem": "They are sufficient for Claude account selection and usage reporting but not for model enumeration; Muse and Kimi also require route-specific settings that cannot be represented by an account token alone.",
+      "test": "Define and validate a T3 route-profile schema; if centrally managed model discovery is required, prototype and measure a versioned aigate /api/models contract."
+    },
+    {
+      "member": "brief",
+      "their_claim": "Automatic account hopping is a success criterion for the integration.",
+      "problem": "The requirement does not establish that hopping is safe within an Agent SDK session, especially after tool calls or partial streamed responses; session-boundary hopping is safer but may not satisfy uninterrupted continuation.",
+      "test": "Use fault injection after text, tool-call, and tool-result phases and verify exactly-once observable tool behavior when resuming on another account."
+    }
+  ],
+  "retractions": [],
+  "needs_research": [
+    "Whether Claude Agent SDK credential precedence on macOS consults or rewrites the global Keychain despite CLAUDE_CONFIG_DIR.",
+    "Whether Agent SDK sessions can resume on a different OAuth account without invalidating context or duplicating side effects.",
+    "The exact T3 web, desktop, and mobile client file paths and existing provider-status contracts.",
+    "Whether T3's current Claude probe exposes reliable quota or rate-limit signals before a turn fails.",
+    "Whether Kimi K3 has a stable official endpoint, authentication contract, and redistribution policy suitable for a generic T3 route profile.",
+    "Whether upstream maintainers would accept a small generic broker-contract PR despite the stated contribution posture."
+  ],
+  "consensus_ready": false,
+  "dissent": "I cannot yet agree to per-turn or mid-thread account hopping, Keychain deletion, or an aigate model-listing endpoint as part of v1. The credential-precedence, session-resume, and client-contract experiments must pass first; until then, ship optional session-boundary Claude brokering with T3-side route profiles and explicit no-support decisions for the other providers.",
+  "_member": "morpheus",
+  "_model": "openai/gpt-5.6-luna-pro",
+  "_ok": true
+}

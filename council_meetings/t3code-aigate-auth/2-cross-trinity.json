@@ -1,0 +1,58 @@
+{
+  "position": "We should implement an upstreamable, generic CredentialBroker interface in apps/server/src/provider/ with an optional aigate adapter. Account selection occurs at session start and turn boundaries via GET /api/select, using T3's turn-based resume cursor (resumeSessionAt) to execute account hops without lost state, while SDK rate_limit_events trigger POST /api/events/limit telemetry. Non-Anthropic models (Muse, Kimi) belong as static route profiles in T3's ClaudeProvider catalog that automatically apply required env flags (e.g., CLAUDE_CODE_MAX_CONTEXT_TOKENS=1007997), since aigate has no model listing API. V1 focuses exclusively on Claude; Codex, Cursor, Grok, and OpenCode remain no-op given aigate's retired non-Claude pools.",
+  "claims": [
+    {
+      "claim": "Per-instance CLAUDE_CONFIG_DIR isolation prevents macOS Keychain credentials from overriding injected CLAUDE_CODE_OAUTH_TOKEN environment variables.",
+      "status": "VERIFIED",
+      "evidence": "Chair EXP-1: Executed claude CLI with isolated CLAUDE_CONFIG_DIR and live setup_token, confirming authentic response without reading or mutating system Keychain.",
+      "test": ""
+    },
+    {
+      "claim": "T3's ClaudeAdapter natively surfaces typed rate-limit events from the SDK that can directly drive aigate parking and account hopping.",
+      "status": "VERIFIED",
+      "evidence": "Chair EXP-5: Layers/ClaudeAdapter.ts:3507-3552 maps SDK rate_limit_event directly to account.rate-limits.updated orchestration events.",
+      "test": ""
+    },
+    {
+      "claim": "Mid-thread account hopping can be safely performed between turns using T3's existing thread resume cursor.",
+      "status": "VERIFIED",
+      "evidence": "Chair EXP-3: Drivers/ClaudeAdapter.ts supports readClaudeResumeState and resumeSessionAt, allowing a new query process to resume a thread ID under a new environment context.",
+      "test": ""
+    },
+    {
+      "claim": "Muse and Kimi K3 must be integrated as static Claude Provider route profiles in T3 Code rather than queried from aigate.",
+      "status": "THEORY",
+      "evidence": "aigate src/server.js has no /api/models endpoint, and route parameters (CLAUDE_CODE_MAX_CONTEXT_TOKENS=1007997, tier mappings, tool name limits) are static operational invariants.",
+      "test": "Register a Muse route profile in ClaudeProvider.ts and verify end-to-end turn completion and context window estimation."
+    },
+    {
+      "claim": "Codex, Cursor, Grok, and OpenCode should be explicitly set to no-op for broker rotation in v1.",
+      "status": "VERIFIED",
+      "evidence": "aigate-gpt.sh retired on 2026-08-04 and aigate src/server.js contains no selection endpoints or active token pools for non-Claude providers.",
+      "test": ""
+    }
+  ],
+  "challenges": [
+    {
+      "member": "TANK",
+      "their_claim": "Model listing for non-Anthropic models like Muse/Kimi is out of scope and users should manually construct custom env instances.",
+      "problem": "Manual environment construction fails to set CLAUDE_CODE_MAX_CONTEXT_TOKENS=1007997 or tier model overrides, causing Haiku 404s and 5x premature context truncation.",
+      "test": "Issue a multi-turn request to Meta Muse without tier env mappings; observe Haiku background call 404."
+    }
+  ],
+  "retractions": [
+    {
+      "was": "Assumed macOS Keychain clearing or shadow login deletion was necessary before injecting aigate credentials.",
+      "now": "Keychain clearing is completely unnecessary under T3 Code's architecture.",
+      "because": "Chair EXP-1 demonstrated that per-instance CLAUDE_CONFIG_DIR isolation prevents Keychain override when CLAUDE_CODE_OAUTH_TOKEN is supplied."
+    }
+  ],
+  "needs_research": [
+    "Does Anthropic's backend enforce account-ownership checks on thread resume state when a thread created by setup_token A is resumed by setup_token B?"
+  ],
+  "consensus_ready": true,
+  "dissent": "",
+  "_member": "trinity",
+  "_model": "google/gemini-3.6-flash",
+  "_ok": true
+}

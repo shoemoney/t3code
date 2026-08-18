@@ -101,3 +101,23 @@ this probe (contaminated first attempt).
   Transcript lives client-side under CLAUDE_CONFIG_DIR; Anthropic does not pin a session to an
   account. n=1, clean turn boundary, haiku model. Mid-tool-call interruption + hop remains
   untested (named open item).
+
+## Chair verification pass #4 (implementation night — EXP-9, the probe that caught a shim)
+
+The T4 regression probe's first honest run (post env-stripping hardening) FAILED: bogus
+CLAUDE_CODE_OAUTH_TOKEN + fresh CLAUDE_CONFIG_DIR SUCCEEDED, apparently falsifying EXP-1.
+Bisect matrix (9 further runs): inline calls pinned to ~/.local/bin/claude 401'd 100% of the
+time; the script reproduced its success 100% of the time. Deterministic difference found:
+`command -v claude` in the script's bash resolved to a **cmux CLI shim**
+(/var/folders/.../cmux-cli-shims/<uuid>/claude) that wraps claude and injects its own working
+credentials.
+
+- **EXP-1 STANDS**: with the real binary, env token honored under isolated config dir, 9/9.
+- **New VERIFIED hazard**: PATH shims from agent runners inject credentials and silently
+  override brokered injection. Applies to anything resolving `claude` via PATH — including a
+  T3 instance whose binaryPath is bare "claude" while the server's PATH carries a shim dir.
+- Probe hardened: prints the resolved binary, hard-FAILs on shim-looking paths (temp dirs),
+  takes CLAUDE_BIN to pin. On boxes with no stored login (this one — the warden clears it),
+  the control correctly SKIPs.
+- Meta-lesson (again): the first "falsification" was a wrong-probe artifact; the second look
+  found a REAL adjacent hazard. Both outcomes only surfaced because the probe existed.

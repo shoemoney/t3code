@@ -1,0 +1,9 @@
+{
+  "claim": "aigate exposes account selection but no model-listing endpoint.",
+  "status": "VERIFIED",
+  "evidence": "Brief measured facts: GET /api/select returns account/setup_token; server internals: no model-listing endpoint exists.",
+  "test": "",
+  "_member": "niobe",
+  "_model": "qwen/qwen3.8-max",
+  "_ok": true
+}

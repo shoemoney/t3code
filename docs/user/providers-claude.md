@@ -215,3 +215,49 @@ If the preset needs different Claude files, give it a different `CLAUDE_CONFIG_D
 different API keys, base URLs, or router settings, use Environment variables.
 
 Do not put environment variable assignments in `Launch arguments`.
+
+## Credential Broker
+
+A credential broker is an account selector that picks which credentials Claude should use for a
+session, determined by which machine is running the agent.
+
+This is useful when you want multiple Claude instances — each with different accounts or API keys
+— to share one T3 Code server. For example: your work laptop and personal laptop both connect to
+the same T3 Code server, but each should use its own API credentials.
+
+### Enable A Credential Broker
+
+Edit your Claude provider in T3 Code Settings:
+
+```text
+Credential broker URL: https://broker.example.com
+Credential broker token variable: AIGATE_TOKEN
+```
+
+The broker URL is the endpoint that T3 Code will call to select credentials. It must support
+`GET /api/select` and return credentials specific to your hostname.
+
+The token variable is the name of a sensitive environment variable on this instance that holds
+your broker's bearer token. Leave it at the default `AIGATE_TOKEN` unless your broker uses a
+different variable name.
+
+### Add The Broker Token
+
+Add a sensitive environment variable to this provider with the token value:
+
+```text
+AIGATE_TOKEN     <your-broker-token>     Sensitive
+```
+
+Mark it as sensitive so T3 Code stores it securely and does not send it back after saving.
+
+### How It Works
+
+When you start a session with this provider, T3 Code calls the broker endpoint with your
+hostname. The broker returns account-specific credentials for this machine, which Claude then
+uses for the session. If the broker is unreachable or returns an error, T3 Code logs a warning
+and falls back to the instance's own credentials.
+
+The broker endpoint must be aigate-compatible: it accepts `GET /api/select?host={hostname}` with
+an `Authorization: Bearer {token}` header and returns JSON with `account` and `setup_token`
+fields.

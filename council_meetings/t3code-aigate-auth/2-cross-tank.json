@@ -1,0 +1,133 @@
+{
+  "position": "T3 Code should integrate aigate as a credential broker in a fork-first approach, using the existing per-instance env injection seam (mergeProviderInstanceEnvironment) with per-instance CLAUDE_CONFIG_DIR isolation, which chair EXP-1 VERIFIED avoids Keychain shadowing. The broker resolves at session start (not per-turn) by calling aigate /api/select and injecting the token into the instance's environment. Model listing for Muse/Kimi is a T3-side static route profile, not an aigate endpoint. Codex/Cursor/Grok/OpenCode are out of scope for v1. The Monday-shippable step: add an optional 'credentialBroker' config to Claude provider instances that specifies a broker URL/token, and on instance creation, call the broker and inject the returned env vars. This is a small, reversible fork feature that can be upstreamed later if the maintainers accept a generic hook.",
+  "claims": [
+    {
+      "claim": "CLAUDE_CODE_OAUTH_TOKEN env beats stored macOS Keychain login when CLAUDE_CONFIG_DIR is isolated per-instance, verified by EXP-1 on the same binary the SDK spawns.",
+      "status": "VERIFIED",
+      "evidence": "Chair EXP-1: fresh CLAUDE_CONFIG_DIR + CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-BOGUS \u2192 401 'invalid token' (env used, not Keychain). Same binary as SDK path. n=1 box, headless -p.",
+      "test": ""
+    },
+    {
+      "claim": "mergeProviderInstanceEnvironment does NOT mutate process.env; it creates a new object per instance, so concurrent instances with different tokens do not race.",
+      "status": "VERIFIED",
+      "evidence": "Chair EXP-4: 'mergeProviderInstanceEnvironment itself does NOT mutate process.env \u2014 it spreads into a new object (ProviderInstanceEnvironment.ts:11)'. Two instances with different tokens do not clobber each other.",
+      "test": ""
+    },
+    {
+      "claim": "aigate has no model-listing endpoint and no model-aware selection logic. It stores provider keys but never enumerates or filters by model.",
+      "status": "VERIFIED",
+      "evidence": "Chair's repo inspection: aigate/src/server.js:295-298 pickRanked selects by headroom only; src/providers.js is key catalog, no models. /api/capabilities returns key/account counts, no models.",
+      "test": ""
+    },
+    {
+      "claim": "T3's SDK query lifecycle is one long-lived session per thread; account hop mid-thread requires killing the query and recreating with resume cursor + new env, which is turn-boundary only.",
+      "status": "VERIFIED",
+      "evidence": "Chair EXP-3: sessions map ThreadId to ClaudeSessionContext; resume mechanism exists (resumeSessionAt); new query can resume a prior session ID. Same shape as claude --continue.",
+      "test": ""
+    },
+    {
+      "claim": "Rate-limit telemetry already flows from SDK to T3 adapter events; the adapter maps rate_limit_event to account.rate-limits.updated orchestration events.",
+      "status": "VERIFIED",
+      "evidence": "Chair EXP-5: ClaudeAdapter.ts:3507-3552 maps SDK rate_limit_event to orchestration events. T3 natively knows per-account headroom during a session.",
+      "test": ""
+    },
+    {
+      "claim": "The model catalog does not gate execution; pseudo-model names (e.g. muse-spark-1.2-contributor) reach the SDK untouched.",
+      "status": "VERIFIED",
+      "evidence": "Chair EXP-6: resolveClaudeApiModelId is a pass-through (appends [1m] for context option). Catalog gates client picker/UI, not execution.",
+      "test": ""
+    },
+    {
+      "claim": "aigate /api/select has no lease/transaction; concurrent callers from multiple hosts can receive the same account.",
+      "status": "VERIFIED",
+      "evidence": "Chair EXP-7: pickRanked is a plain ranked SELECT (src/server.js:295-298); no transaction or lease. Healing is TTL parking + 10-min usage polling.",
+      "test": ""
+    },
+    {
+      "claim": "The env injection seam is captured at adapter construction, not per query spawn. Dynamic per-spawn env resolution requires new code.",
+      "status": "VERIFIED",
+      "evidence": "Chair EXP-4: makeClaudeEnvironment runs once in adapter layer (:1663) and queryOptions.env reuses it (:4176). mergeProviderInstanceEnvironment does not re-read on each spawn.",
+      "test": ""
+    },
+    {
+      "claim": "Muse/Kimi require specific env overrides incompatible with aigate's OAuth token injection: CLAUDE_CODE_OAUTH_TOKEN must be unset, ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN set, and tier env mappings applied.",
+      "status": "VERIFIED",
+      "evidence": "Chair's aigate-muse.sh analysis: ANTHROPIC_BASE_URL=https://api.meta.ai, ANTHROPIC_AUTH_TOKEN=<LLM|key>, CLAUDE_CODE_OAUTH_TOKEN unset, all model-tier variables mapped, CLAUDE_CODE_MAX_CONTEXT_TOKENS=1007997, dedicated settings file for 64-char tool-name limit.",
+      "test": ""
+    },
+    {
+      "claim": "Codex/Cursor/Grok/OpenCode account rotation is out of scope for v1; aigate holds no multi-account selectors for them and the GPT rung is retired.",
+      "status": "VERIFIED",
+      "evidence": "Chair's aigate API inventory: no select/accounts/limit endpoints for non-Claude providers. aigate-gpt.sh retired 2026-08-04 (402 out-of-credits per brief).",
+      "test": ""
+    },
+    {
+      "claim": "The smallest shippable step is adding an optional 'credentialBroker' config to Claude provider instances, calling aigate /api/select on instance creation, and injecting the returned token via the existing env seam.",
+      "status": "THEORY",
+      "evidence": "Existing env injection seam (ProviderInstanceEnvironment.ts, ClaudeDriver.ts:128) and secret store (ServerSecretStore) can inject arbitrary env vars. Multi-instance is native. No code changes needed to the SDK call site.",
+      "test": "Implement the broker config and run a test T3 session with aigate enabled; verify that the instance uses the selected account and that disabling the broker restores current behavior byte-for-byte."
+    },
+    {
+      "claim": "Upstream (theo/julius) will not accept a large feature PR; the integration should be fork-first with a generic hook that could later be upstreamed as a small focused PR.",
+      "status": "THEORY",
+      "evidence": "CONTRIBUTING.md: 'not actively accepting contributions'. Brief: maintainers accept only small focused PRs. No direct measurement of maintainer response to a generic broker hook PR.",
+      "test": "After the fork proves the design, open one focused PR adding only the spawn-time external env-resolution hook (no aigate references) and observe maintainer disposition."
+    }
+  ],
+  "challenges": [
+    {
+      "member": "MORPHEUS",
+      "their_claim": "THEORY: A first release should call aigate at process/session start and inject the selected Claude OAuth token, rather than attempting per-turn account switching.",
+      "problem": "Agreed on session-start injection, but the claim assumes the env seam is refreshed per spawn. EXP-4 shows makeClaudeEnvironment runs once per adapter construction, not per query. So session-start injection requires a new per-spawn resolution point or a re-creation of the adapter/instance. The claim does not account for this static capture.",
+      "test": "Instrument ClaudeDriver to log the env hash on each sendTurn across a 3-turn thread. If the hash is identical, the env is not refreshed per spawn, and per-turn account switching without re-creation is not possible."
+    },
+    {
+      "member": "TRINITY",
+      "their_claim": "Phase 2 introduces an upstreamable lightweight CredentialBroker interface that dynamically invokes aigate's /api/select and /api/events/limit endpoints on session init and retry.",
+      "problem": "Upstreamability is contested: CONTRIBUTING.md states 'not actively accepting contributions'. The claim that a CredentialBroker interface would be accepted as a small PR is unsupported by any evidence of maintainer openness. Until that is tested, the upstreamable claim is a theory at best.",
+      "test": "Submit a minimal PR adding only the CredentialBroker interface (no aigate-specific code) and observe maintainer response. If closed, the fork-first path is mandatory."
+    },
+    {
+      "member": "MOUSE",
+      "their_claim": "THEORY: Zero broker concept in T3 core \u2014 use three dumb Claude instances whose env secrets an external aigate side-car refreshes.",
+      "problem": "This design requires the side-car to modify T3's secret store (ServerSecretStore) out-of-band, which is a race condition with T3's own settings management. T3's secret store is not designed for external mutation; it's write-once from the UI. The side-car would need to either restart T3 services or use an undocumented API, breaking the 'remote-ready' requirement. Also, model listing for Muse/Kimi would be entirely manual per instance, offering no user experience improvement over current manual config.",
+      "test": "Implement the side-car approach: have an external process write new tokens into ~/.t3/userdata/secrets/*.bin and then trigger a provider instance re-initialization. Measure whether the instance picks up the new token without restarting the server or losing session state. If it cannot, the side-car approach is insufficient for dynamic rotation."
+    },
+    {
+      "member": "SERAPH",
+      "their_claim": "If mergeProviderInstanceEnvironment() overlays onto the server-global process.env, then two broker-backed instances on different accounts race.",
+      "problem": "EXP-4 VERIFIED that mergeProviderInstanceEnvironment does NOT mutate process.env; it creates a new object per instance. The claim was based on ambiguous wording in the brief, but the actual code is concurrency-safe.",
+      "test": "Read ProviderInstanceEnvironment.ts:3-16 (14 lines) \u2014 the code spreads into a new object, not process.env. No race."
+    },
+    {
+      "member": "brief",
+      "their_claim": "The integration must hit all surfaces (web/desktop/mobile) and provide model listing for non-Anthropic models.",
+      "problem": "Model listing is conflated with credential brokering. aigate has no model endpoint; Muse/Kimi require static route profiles. Requiring model listing from aigate invents scope. The integration should separate credential brokering (aigate's job) from model discovery (T3's static catalog or future provider capability).",
+      "test": "Implement T3-side static route profiles for Muse/Kimi and verify they work without any aigate model endpoint. Compare UX: user creates a Claude instance with predefined env overrides vs. querying a server for available models. The simpler approach is sufficient for v1."
+    }
+  ],
+  "retractions": [
+    {
+      "was": "TANK claimed: 'UNMEASURED: aigate-run.sh's keychain-delete trick... may not apply under Agent SDK with per-instance CLAUDE_CONFIG_DIR \u2014 but it is UNMEASURED.'",
+      "now": "VERIFIED: CLAUDE_CODE_OAUTH_TOKEN env beats Keychain when CLAUDE_CONFIG_DIR is isolated per-instance (EXP-1). No Keychain clearing needed. The shadowing hazard is resolved for the SDK path with per-instance isolation.",
+      "because": "Chair EXP-1 provided conclusive evidence on the same binary the SDK spawns. The Keychain outranking is specific to the default config dir, not T3's isolated CLAUDE_CONFIG_DIR."
+    },
+    {
+      "was": "TANK claimed: 'mergeProviderInstanceEnvironment overlays onto process.env' (implying possible concurrency race).",
+      "now": "VERIFIED: mergeProviderInstanceEnvironment does NOT mutate process.env; it creates a new object per instance (EXP-4). No race.",
+      "because": "Chair EXP-4 explicitly read the code and confirmed it spreads into a new object. The brief's wording was ambiguous; the actual code is safe."
+    }
+  ],
+  "needs_research": [
+    "Does the Agent SDK's query() actually reuse the same child process across turns, or does it spawn a new process per turn? This affects whether per-turn env injection is cheap or requires a new adapter/instance.",
+    "What is the exact error event schema the SDK emits on 429/529 rate limits? Can the adapter reliably extract retry-after and unified-reset epochs without regex parsing?",
+    "Does aigate's /api/select have any rate limit or do we need to add caching on the T3 side to avoid hammering it on every turn?",
+    "How does T3's desktop app store and manage provider instance configs? Can we add a 'credentialBroker' field to the UI without breaking mobile/CLI?",
+    "What is the precise behavior of the SDK when CLAUDE_CODE_OAUTH_TOKEN is set but the Keychain also has a token for the same config dir? Does the SDK prefer the env var always, or does it fall back to Keychain when env var is missing? EXP-1 only tested with env var present."
+  ],
+  "consensus_ready": false,
+  "dissent": "I cannot agree to a design that either (a) embeds aigate-specific code in T3 core or (b) requires a new aigate models endpoint. The minimum viable integration is a generic spawn-time env resolution hook in the Claude provider that can be backed by aigate or any other external selector. This hook should be optional and off by default. I also dissent from the assumption that mid-session account hopping is safe without testing the SDK's resume mechanism with a changed env. The 'session-boundary only' approach is safer and should be the default. Finally, I disagree that model listing is a v1 requirement; Muse/Kimi can be statically configured as provider instances with custom env, which is already possible today.",
+  "_member": "tank",
+  "_model": "deepseek/deepseek-v4-flash",
+  "_ok": true
+}

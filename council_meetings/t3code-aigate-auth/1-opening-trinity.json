@@ -1,0 +1,61 @@
+{
+  "position": "We recommend a two-phase architecture: Phase 1 (zero-diff) maps aigate setup tokens and alternative endpoints (Muse/Kimi) into distinct T3 Provider Instances using existing `ProviderInstanceEnvironment` variables and `CLAUDE_CONFIG_DIR` isolation. Phase 2 introduces an upstreamable lightweight `CredentialBroker` interface in `apps/server/src/provider/` that dynamically invokes aigate's `/api/select` and `/api/events/limit` endpoints on session init and retry, bypassing macOS Keychain conflicts by enforcing per-instance sandbox homes. Other providers (Codex, Cursor, Grok, OpenCode) are explicitly excluded from account rotation in v1 as aigate holds no active multi-account rotators for them.",
+  "claims": [
+    {
+      "claim": "T3 Code already supports per-instance environment variable injection and secret storage without modifying provider core execution logic.",
+      "status": "VERIFIED",
+      "evidence": "apps/server/src/provider/ProviderInstanceEnvironment.ts:3-16 (`mergeProviderInstanceEnvironment`) and apps/server/src/provider/Drivers/ClaudeDriver.ts:128",
+      "test": ""
+    },
+    {
+      "claim": "aigate lacks a model enumeration endpoint, so non-Anthropic models (Muse, Kimi) must be declared via T3 model catalog or client-configured pseudo-models.",
+      "status": "VERIFIED",
+      "evidence": "aigate codebase inspection: src/providers.js contains key catalogs, but no /api/models endpoint exists in src/server.js",
+      "test": ""
+    },
+    {
+      "claim": "Isolating `CLAUDE_CONFIG_DIR` per T3 provider instance prevents `@anthropic-ai/claude-agent-sdk` from reading or mutating the system macOS Keychain item `Claude Code-credentials`.",
+      "status": "THEORY",
+      "evidence": "Drivers/ClaudeHome.ts sets CLAUDE_CONFIG_DIR per instance ID, but SDK behavior regarding macOS Security framework Keychain overrides in headless mode is unverified.",
+      "test": "Run two T3 Claude instances on macOS with distinct CLAUDE_CONFIG_DIR paths and different CLAUDE_CODE_OAUTH_TOKEN values; sniff HTTP headers at a local proxy to verify token isolation and inspect Keychain for modification."
+    },
+    {
+      "claim": "Codex, Cursor, Grok, and OpenCode have no multi-account rotation support in aigate v1.",
+      "status": "VERIFIED",
+      "evidence": "aigate retirement log (aigate-gpt.sh retired 2026-08-04) and absence of account selection endpoints for non-Claude providers in aigate/src/server.js",
+      "test": ""
+    }
+  ],
+  "challenges": [
+    {
+      "member": "brief",
+      "their_claim": "aigate should provide model listing for Muse and Kimi K3 to T3 Code",
+      "problem": "aigate is strictly a credential vault and Claude account selector; it does not proxy requests or inspect model availability dynamically.",
+      "test": "Inspect aigate OpenAPI spec / src/server.js routes; observe absence of GET /api/models."
+    }
+  ],
+  "retractions": [],
+  "needs_research": [
+    "Does @anthropic-ai/claude-agent-sdk query() bypass macOS Keychain credential lookup when CLAUDE_CONFIG_DIR and CLAUDE_CODE_OAUTH_TOKEN are explicitly defined?",
+    "How does Claude Code SDK handle mid-session 429 error callbacks inside T3's event-sourced turn execution loop?"
+  ],
+  "consensus_ready": false,
+  "dissent": "Cannot mark consensus ready until the macOS Keychain isolation test under CLAUDE_CONFIG_DIR with @anthropic-ai/claude-agent-sdk is verified empirically.",
+  "implementation_plan": {
+    "smallest_shippable_step": "Define separate T3 Provider Instances (e.g., 'Claude - Bastardtech', 'Claude - Personal', 'Meta Muse') in ~/.t3/userdata/settings.json, populated with aigate tokens via a local helper CLI, utilizing T3's existing mergeProviderInstanceEnvironment behavior.",
+    "architecture": {
+      "provider_decisions": {
+        "claude": "First-class integration via aigate /api/select token broker and CLAUDE_CONFIG_DIR isolation.",
+        "codex": "Single credential only (out of scope for rotation; GPT rotator retired).",
+        "cursor": "Single credential only (out of scope).",
+        "grok": "Single credential only (out of scope).",
+        "opencode": "Single credential only (out of scope)."
+      },
+      "model_catalog": "Extend CLAUDE_MODEL_CATALOG in apps/server/src/provider/Layers/ClaudeProvider.ts with optional custom model definitions for Meta Muse (muse-spark-1.2-contributor) and Kimi K3.",
+      "turn_and_session_hopping": "Catch 429/quota errors at ClaudeAdapter.ts query turn boundary, call aigate POST /api/events/limit, re-fetch account from GET /api/select, and re-issue turn with refreshed CLAUDE_CODE_OAUTH_TOKEN."
+    }
+  },
+  "_member": "trinity",
+  "_model": "google/gemini-3.6-flash",
+  "_ok": true
+}
