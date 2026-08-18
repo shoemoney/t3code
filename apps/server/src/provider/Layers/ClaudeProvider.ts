@@ -753,6 +753,12 @@ const probeClaudeCapabilities = (
     // account rather than the instance's baseline credentials. An empty
     // brokerUrl short-circuits inside resolveBrokerEnvironment before any
     // fetch, so non-brokered instances never pay the broker timeout.
+    // Selecting is a read-only handout on the broker side — it ranks accounts,
+    // decrypts one token and returns it; nothing is leased or decremented, and
+    // parking only happens when a client reports a rate limit — so probing does
+    // not consume headroom. It is a point-in-time snapshot: a turn resolves its
+    // own account, so this can name a different account than the next turn runs
+    // on. The driver's 5m capabilities cache is what keeps the rate sane.
     const brokerResolution = yield* resolveBrokerEnvironment({
       brokerUrl: claudeSettings.brokerUrl,
       token: claudeEnvironment[claudeSettings.brokerTokenEnv || DEFAULT_BROKER_TOKEN_ENV],
